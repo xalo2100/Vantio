@@ -1,0 +1,149 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
+const AuthContext = createContext();
+
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) {
+        throw new Error('useAuth must be used within an AuthProvider');
+    }
+    return context;
+};
+
+export const AuthProvider = ({ children }) => {
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Verificar sesión actual
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            setUser(session?.user ?? null);
+            setLoading(false);
+        });
+
+        // Escuchar cambios de autenticación
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            setUser(session?.user ?? null);
+            setLoading(false);
+        });
+
+        return () => subscription.unsubscribe();
+    }, []);
+
+    const signInWithGoogle = async () => {
+        try {
+            // Verificar que Supabase esté configurado
+            if (!isSupabaseConfigured()) {
+                console.error('❌ Supabase no está configurado correctamente');
+                throw new Error('Supabase no está configurado. Por favor verifica tus credenciales.');
+            }
+
+            if (!supabase) {
+                console.error('❌ Cliente de Supabase no inicializado');
+                throw new Error('Error de configuración. Por favor recarga la página.');
+            }
+
+            console.log('🔐 Iniciando Google OAuth...');
+            console.log('📍 Redirect URL:', `${window.location.origin}/auth/callback`);
+
+            const { data, error } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: `${window.location.origin}/auth/callback`,
+                    queryParams: {
+                        access_type: 'offline',
+                        prompt: 'consent',
+                    },
+                    skipBrowserRedirect: false
+                }
+            });
+
+            if (error) {
+                console.error('❌ OAuth Error:', error);
+
+                // Mensajes de error más descriptivos
+                if (error.message?.includes('Provider not enabled')) {
+                    throw new Error('Google OAuth no está habilitado en Supabase. Por favor contacta al administrador.');
+                }
+                if (error.message?.includes('Invalid redirect')) {
+                    throw new Error('URL de redirección no autorizada. Por favor contacta al administrador.');
+                }
+
+                throw error;
+            }
+
+            console.log('✅ OAuth iniciado exitosamente');
+            console.log('🔗 URL de OAuth:', data.url);
+
+            // Verificar que se haya generado una URL
+            if (!data.url) {
+                throw new Error('No se pudo generar la URL de autenticación. Por favor intenta nuevamente.');
+            }
+
+            return { data, error: null };
+        } catch (error) {
+            console.error('💥 Error al iniciar sesión con Google:', error);
+            return {
+                data: null,
+                error: {
+                    message: error.message || 'Error al iniciar sesión con Google. Por favor intenta nuevamente.',
+                    details: error
+                }
+            };
+        }
+    };
+
+    const signInWithPassword = async (email, password) => {
+        try {
+            console.log('🔐 Iniciando sesión con email/password...');
+
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email,
+                password
+            });
+
+            if (error) {
+                console.error('❌ Error de autenticación:', error);
+                throw error;
+            }
+
+            console.log('✅ Sesión iniciada exitosamente');
+            return { data, error: null };
+        } catch (error) {
+            console.error('💥 Error al iniciar sesión:', error);
+            return {
+                data: null,
+                error: {
+                    message: error.message || 'Error al iniciar sesión. Verifica tus credenciales.',
+                    details: error
+                }
+            };
+        }
+    };
+
+
+    const signOut = async () => {
+        try {
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+            setUser(null);
+        } catch (error) {
+            console.error('Error signing out:', error);
+        }
+    };
+
+    const value = {
+        user,
+        loading,
+        signInWithGoogle,
+        signInWithPassword,
+        signOut
+    };
+
+    return (
+        <AuthContext.Provider value={value}>
+            {children}
+        </AuthContext.Provider>
+    );
+};
