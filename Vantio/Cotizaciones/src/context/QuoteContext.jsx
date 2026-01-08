@@ -358,7 +358,7 @@ export const QuoteProvider = ({ children }) => {
             conditions: quote.conditions,
             internalNotes: quote.internal_notes || quote.internalNotes,
             paymentTerms: quote.payment_terms || quote.paymentTerms,
-            paymentTerms: quote.payment_terms || quote.paymentTerms,
+
             deliveryTime: quote.delivery_time || quote.deliveryTime,
             companyName: quote.company_name || quote.companyName
         };
@@ -401,7 +401,7 @@ export const QuoteProvider = ({ children }) => {
                 currency: q.currency,
                 exchangeRate: parseFloat(q.exchange_rate || 1.0),
                 paymentTerms: q.payment_terms || q.paymentTerms,
-                paymentTerms: q.payment_terms || q.paymentTerms,
+
                 deliveryTime: q.delivery_time || q.deliveryTime,
                 companyName: q.company_name || q.companyName
             })),

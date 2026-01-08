@@ -16,6 +16,13 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        // Validación de seguridad para evitar crashes si faltan credenciales
+        if (!isSupabaseConfigured() || !supabase) {
+            console.warn('⚠️ Supabase no está configurado. La autenticación automática se omitirá.');
+            setLoading(false);
+            return;
+        }
+
         // Verificar sesión actual
         supabase.auth.getSession().then(({ data: { session } }) => {
             setUser(session?.user ?? null);
@@ -31,18 +38,17 @@ export const AuthProvider = ({ children }) => {
         return () => subscription.unsubscribe();
     }, []);
 
+    // Helper para validar Supabase antes de operaciones
+    const checkSupabase = () => {
+        if (!isSupabaseConfigured() || !supabase) {
+            console.error('❌ Supabase no está configurado');
+            throw new Error('Sistema no configurado. Faltan las credenciales de conexión (archivo .env).');
+        }
+    };
+
     const signInWithGoogle = async () => {
         try {
-            // Verificar que Supabase esté configurado
-            if (!isSupabaseConfigured()) {
-                console.error('❌ Supabase no está configurado correctamente');
-                throw new Error('Supabase no está configurado. Por favor verifica tus credenciales.');
-            }
-
-            if (!supabase) {
-                console.error('❌ Cliente de Supabase no inicializado');
-                throw new Error('Error de configuración. Por favor recarga la página.');
-            }
+            checkSupabase();
 
             console.log('🔐 Iniciando Google OAuth...');
             console.log('📍 Redirect URL:', `${window.location.origin}/auth/callback`);
@@ -96,6 +102,7 @@ export const AuthProvider = ({ children }) => {
 
     const signInWithPassword = async (email, password) => {
         try {
+            checkSupabase();
             console.log('🔐 Iniciando sesión con email/password...');
 
             const { data, error } = await supabase.auth.signInWithPassword({
@@ -124,6 +131,7 @@ export const AuthProvider = ({ children }) => {
 
     const signUpWithPassword = async (email, password, full_name) => {
         try {
+            checkSupabase();
             console.log('📝 Registrando nuevo usuario...');
 
             const { data, error } = await supabase.auth.signUp({
