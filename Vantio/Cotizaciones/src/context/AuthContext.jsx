@@ -122,6 +122,39 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
+    const signUpWithPassword = async (email, password, full_name) => {
+        try {
+            console.log('📝 Registrando nuevo usuario...');
+
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    data: {
+                        full_name: full_name,
+                    }
+                }
+            });
+
+            if (error) {
+                console.error('❌ Error de registro:', error);
+                throw error;
+            }
+
+            console.log('✅ Usuario registrado exitosamente');
+            return { data, error: null };
+        } catch (error) {
+            console.error('💥 Error al registrarse:', error);
+            return {
+                data: null,
+                error: {
+                    message: error.message || 'Error al crear cuenta. Inténtalo de nuevo.',
+                    details: error
+                }
+            };
+        }
+    };
+
 
     const signOut = async () => {
         try {
@@ -138,6 +171,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         signInWithGoogle,
         signInWithPassword,
+        signUpWithPassword,
         signOut
     };
 

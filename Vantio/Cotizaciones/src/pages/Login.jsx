@@ -4,13 +4,15 @@ import { useAuth } from '../context/AuthContext';
 import { FileText, Sparkles, CheckCircle, Zap } from 'lucide-react';
 
 const Login = () => {
-    const { user, signInWithGoogle, signInWithPassword } = useAuth();
+    const { user, signInWithGoogle, signInWithPassword, signUpWithPassword } = useAuth();
     const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const [showEmailLogin, setShowEmailLogin] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [fullName, setFullName] = useState('');
 
     useEffect(() => {
         if (user) {
@@ -54,13 +56,28 @@ const Login = () => {
         setError(null);
 
         try {
-            const { error } = await signInWithPassword(email, password);
+            let result;
+            if (isRegistering) {
+                result = await signUpWithPassword(email, password, fullName);
+                if (!result.error) {
+                    // Show success message or auto-login (Supabase auto-logs in if no email confirmation required)
+                    // If email confirmation is ON, we should tell the user.
+                    // Assuming for now it requires confirmation or auto-login.
+                    if (result.data?.user && !result.data.session) {
+                        setError('Cuenta creada. Por favor verifica tu correo electrónico.');
+                        setIsLoading(false);
+                        return;
+                    }
+                }
+            } else {
+                result = await signInWithPassword(email, password);
+            }
 
-            if (error) {
-                setError(error.message || 'Error al iniciar sesión');
+            if (result.error) {
+                setError(result.error.message || 'Error al autenticar');
                 setIsLoading(false);
             }
-            // Si no hay error, el usuario será redirigido automáticamente
+            // Success redirects via useEffect
         } catch (err) {
             setError(err.message || 'Error inesperado');
             setIsLoading(false);
@@ -93,10 +110,10 @@ const Login = () => {
                 {/* Login Card */}
                 <div className="glass-panel p-8 rounded-2xl shadow-2xl border border-white/20">
                     <h2 className="text-2xl font-bold text-petrol-800 mb-2 text-center">
-                        Bienvenido
+                        {isRegistering ? 'Crear Cuenta' : 'Bienvenido'}
                     </h2>
                     <p className="text-gray-600 text-center mb-8">
-                        Inicia sesión para acceder a tu panel
+                        {isRegistering ? 'Regístrate para comenzar' : 'Inicia sesión para acceder a tu panel'}
                     </p>
 
                     {/* Error Message */}
@@ -121,6 +138,21 @@ const Login = () => {
                     {/* Email/Password Login Form */}
                     {showEmailLogin && (
                         <form onSubmit={handleEmailLogin} className="space-y-4 mb-6">
+                            {isRegistering && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Nombre Completo
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={fullName}
+                                        onChange={(e) => setFullName(e.target.value)}
+                                        required
+                                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-petrol-500 focus:outline-none transition-colors"
+                                        placeholder="Tu Nombre"
+                                    />
+                                </div>
+                            )}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Email
@@ -152,7 +184,7 @@ const Login = () => {
                                 disabled={isLoading}
                                 className="w-full bg-petrol-600 hover:bg-petrol-700 text-white font-semibold px-6 py-4 rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                {isLoading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
+                                {isLoading ? 'Procesando...' : (isRegistering ? 'Registrarse' : 'Iniciar Sesión')}
                             </button>
                         </form>
                     )}
@@ -164,6 +196,19 @@ const Login = () => {
                     >
                         {showEmailLogin ? '← Volver a Google' : '📧 Usar Email y Contraseña'}
                     </button>
+
+                    {showEmailLogin && (
+                        <div className="text-center mb-4">
+                            <button
+                                type="button"
+                                onClick={() => setIsRegistering(!isRegistering)}
+                                className="text-sm text-petrol-600 hover:text-petrol-800 font-semibold underline"
+                            >
+                                {isRegistering ? '¿Ya tienes cuenta? Inicia Sesión' : '¿No tienes cuenta? Regístrate'}
+                            </button>
+                        </div>
+                    )}
+
 
                     {/* Google Login Button */}
                     {!showEmailLogin && (
@@ -227,7 +272,7 @@ const Login = () => {
                     Powered by Alfapack v2.0
                 </p>
             </div>
-        </div>
+        </div >
     );
 };
 
