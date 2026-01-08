@@ -1137,6 +1137,16 @@ const QuoteBuilder = () => {
                             )}
                         </div>
                         <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre de Contacto</label>
+                            <input
+                                type="text"
+                                className="input-field w-full"
+                                placeholder="Ej: Juan Pérez"
+                                value={quoteData.clientName || ''}
+                                onChange={(e) => updateField('clientName', e.target.value)}
+                            />
+                        </div>
+                        <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">Razón Social (Opcional)</label>
                             <input
                                 type="text"
