@@ -23,7 +23,7 @@ const SalesNoteDetail = () => {
     // Form state
     const [formData, setFormData] = useState({
         payment_method: '',
-        comments: '',
+        notes: '',
         status: 'draft',
         billing_details: {},
         items: []
@@ -98,7 +98,7 @@ const SalesNoteDetail = () => {
             setFormData(prev => ({
                 ...prev,
                 payment_method: quote.payment_terms || '',
-                comments: quote.notes || '',
+                notes: quote.notes || '',
                 billing_details: {
                     giro: '',
                     oc_number: '',
@@ -162,7 +162,7 @@ const SalesNoteDetail = () => {
 
             setFormData({
                 payment_method: note.payment_method || q.payment_terms || '',
-                comments: note.comments || q.notes || '',
+                notes: note.notes || q.notes || '',
                 status: note.status || 'draft',
                 billing_details: {
                     ...savedDetails,
@@ -195,7 +195,7 @@ const SalesNoteDetail = () => {
 
             const payload = {
                 payment_method: formData.payment_method,
-                comments: formData.comments,
+                notes: formData.notes,
                 status: formData.status,
                 billing_details: formData.billing_details,
                 items: formData.items,
@@ -346,7 +346,7 @@ const SalesNoteDetail = () => {
                     </button>
                     <div>
                         <h1 className="text-xl font-bold text-petrol-800">
-                            {id === 'new' ? 'Nueva Nota de Venta' : `Nota de Venta #${data.number || data.note_number}`}
+                            {id === 'new' ? 'Nueva Nota de Venta' : `Nota de Venta #${data.note_number || data.number || '---'}`}
                         </h1>
                         <p className="text-sm text-gray-500">
                             {id === 'new' ? 'Basada en cotización' : `Creada el ${new Date(data.created_at).toLocaleDateString()}`}
@@ -593,8 +593,8 @@ const SalesNoteDetail = () => {
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 mb-1">Comentarios</label>
                                     <textarea
-                                        value={formData.comments}
-                                        onChange={(e) => setFormData({ ...formData, comments: e.target.value })}
+                                        value={formData.notes}
+                                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                                         className="input-field w-full min-h-[80px] text-sm"
                                         placeholder="Comentarios adicionales..."
                                     />
@@ -786,7 +786,7 @@ const SalesNoteDetail = () => {
                             <div className="w-2/3">
                                 <div className="bg-blue-900 text-white font-bold px-2 py-1 text-xs text-center">Comentario</div>
                                 <div className="border-2 border-black h-24 p-2 text-xs">
-                                    {formData.comments}
+                                    {formData.notes}
                                 </div>
                             </div>
 
