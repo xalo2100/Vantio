@@ -1,0 +1,11 @@
+{
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/Vantio/Cotizaciones/$1"
+        }
+    ],
+    "buildCommand": "cd Vantio/Cotizaciones && npm install && npm run build",
+    "outputDirectory": "Vantio/Cotizaciones/dist",
+    "framework": "vite"
+}
