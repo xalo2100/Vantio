@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Plus, Trash2, Save, Send, Eye, CheckCircle, MessageSquare, Briefcase, Calendar, Lock, Shield,
-    ChevronDown, ChevronUp, History, Settings, UserCheck, PlusCircle, AlertCircle, Mail, Search, Building2, User, WifiOff, Wifi
+    ChevronDown, ChevronUp, History, Settings, UserCheck, PlusCircle, AlertCircle, Mail, Search, Building2, User, WifiOff, Wifi, MapPin
 } from 'lucide-react';
 import CreateClientModal from '../components/CreateClientModal';
 import { useQuotes } from '../context/QuoteContext';
@@ -37,19 +37,55 @@ const QuoteBuilder = () => {
         ],
         notes: '',
         conditions: '',
-        internal_notes: ''
+        internal_notes: '',
+        clientRegion: '',
+        clientCompanyPhone: ''
     });
 
     // Load quote if id is present and fetch fresh product data
     useEffect(() => {
-        if (id) {
-            const existingQuote = getQuoteById(id);
-            if (existingQuote) {
-                console.log("📝 Loading existing quote for edit:", existingQuote);
+        const loadExistingQuote = async () => {
+            if (!id) return;
 
-                // Fetch fresh product info to update stale snapshots
-                const refreshItems = async (items) => {
-                    const freshItems = await Promise.all(items.map(async (item) => {
+            setLoading(true);
+            try {
+                // Try to get from context first, if not found or incomplete, fetch from Supabase
+                let existingQuote = getQuoteById(id);
+
+                if (!existingQuote) {
+                    console.log("🔍 Quote not in context, fetching from Supabase directly...");
+                    const { data, error } = await supabase
+                        .from('quotes')
+                        .select('*')
+                        .eq('id', id)
+                        .single();
+
+                    if (error) throw error;
+                    existingQuote = {
+                        ...data,
+                        quoteNumber: data.quote_number,
+                        clientName: data.client_name,
+                        clientEmail: data.client_email,
+                        projectName: data.project_name,
+                        validUntil: data.valid_until,
+                        internalNotes: data.internal_notes,
+                        paymentTerms: data.payment_terms,
+                        deliveryTime: data.delivery_time,
+                        clientPhone: data.client_phone,
+                        companyName: data.company_name,
+                        clientRut: data.client_rut,
+                        clientCity: data.client_city,
+                        clientRegion: data.client_region,
+                        clientCompanyPhone: data.client_company_phone,
+                        clientAddress: data.client_address
+                    };
+                }
+
+                if (existingQuote) {
+                    console.log("📝 Loading existing quote for edit:", existingQuote);
+
+                    // Fetch fresh product info to update stale snapshots
+                    const freshItems = await Promise.all((existingQuote.items || []).map(async (item) => {
                         const productId = item.productId || item.id;
                         if (!productId || typeof productId !== 'string' || productId.length < 30) return item;
 
@@ -68,7 +104,7 @@ const QuoteBuilder = () => {
                                     productMainImage: product.main_image || item.productMainImage,
                                     productModel: product.model || item.productModel,
                                     productVideoUrl: product.video_url || item.productVideoUrl,
-                                    description: product.name // Ensure main description is also synced? Maybe risky if custom edit. Let's stick to enriched fields.
+                                    description: product.name
                                 };
                             }
                         } catch (e) {
@@ -78,7 +114,7 @@ const QuoteBuilder = () => {
                     }));
 
                     setQuoteData({
-                        quote_number: existingQuote.quoteNumber,
+                        quote_number: existingQuote.quoteNumber || existingQuote.quote_number,
                         companyName: existingQuote.companyName || '',
                         clientName: existingQuote.clientName || '',
                         clientEmail: existingQuote.clientEmail || '',
@@ -86,23 +122,31 @@ const QuoteBuilder = () => {
                         projectName: existingQuote.projectName || '',
                         currency: existingQuote.currency || 'USD',
                         validUntil: existingQuote.validUntil ? existingQuote.validUntil.split('T')[0] : '',
-                        items: freshItems, // Use fresh items
+                        items: freshItems,
                         notes: existingQuote.notes || '',
                         conditions: existingQuote.conditions || '',
                         internal_notes: existingQuote.internalNotes || '',
                         paymentTerms: existingQuote.paymentTerms || '',
-                        deliveryTime: existingQuote.deliveryTime || ''
+                        deliveryTime: existingQuote.deliveryTime || '',
+                        clientRut: existingQuote.clientRut || '',
+                        clientCity: existingQuote.clientCity || '',
+                        clientAddress: existingQuote.clientAddress || ''
                     });
-                };
 
-                refreshItems(existingQuote.items || []);
-
-                // If it's a Pipedrive client, we might want to set that too if we had the ID
-                // For now, let's keep it simple
+                    // Update exchange rate if quote had one cached
+                    if (existingQuote.exchangeRate) {
+                        setExchangeRate(existingQuote.exchangeRate);
+                    }
+                }
+            } catch (error) {
+                console.error("❌ Error loading existing quote:", error);
+            } finally {
+                setLoading(false);
             }
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id]); // Only run on mount or ID change to avoid overwriting unsaved edits
+        };
+
+        loadExistingQuote();
+    }, [id]);
 
     // DEBUG: Check profile on every render
     console.log("🏗️ QuoteBuilder RENDER:", {
@@ -196,17 +240,11 @@ const QuoteBuilder = () => {
 
     useEffect(() => {
         if (profile) {
-            // Only set quote number if it's empty (new quote)
+            // Only set salesperson info if it's a new quote
             if (!quoteData.quote_number) {
-                const initials = getInitials(profile.full_name || profile.email);
-                const datePart = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-                const randomPart = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-                const newQuoteNumber = `COT-${initials}-${datePart}-${randomPart}`;
-
-                // Auto-load salesperson data from profile
                 setQuoteData(prev => ({
                     ...prev,
-                    quote_number: newQuoteNumber,
+                    quote_number: '', // Let DB assign sequential number
                     salesPerson: profile.full_name || 'N/A',
                     salesEmail: profile.email || 'N/A',
                     salesPhone: profile.phone || 'N/A'
@@ -251,7 +289,7 @@ const QuoteBuilder = () => {
         const date = new Date();
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
-        const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const random = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit random number
         const initials = getInitials(profile?.full_name || 'GS');
         return `COT-${initials}-${year}${month}-${random}`;
     };
@@ -330,13 +368,14 @@ const QuoteBuilder = () => {
 
         if (profile) {
             loadSettings();
-            // Generate initial quote number if empty
-            setQuoteData(prev => {
-                if (!prev.quote_number) {
-                    return { ...prev, quote_number: generateQuoteNumber() };
-                }
-                return prev;
-            });
+
+            // For new quotes, ensure number is empty so DB trigger kicks in
+            if (!id && !quoteData.quote_number) {
+                setQuoteData(prev => ({
+                    ...prev,
+                    quote_number: ''
+                }));
+            }
 
             if (profile.organization_id) {
                 fetchProducts();
@@ -409,7 +448,7 @@ const QuoteBuilder = () => {
         }
     };
 
-    const handleClientSelect = (selectedOption) => {
+    const handleClientSelect = async (selectedOption) => {
         if (!selectedOption) return;
 
         console.log('🎯 Selecting client:', selectedOption);
@@ -417,6 +456,51 @@ const QuoteBuilder = () => {
         // Reset search term and hide dropdown
         setClientSearchTerm(selectedOption.name || '');
         setShowClientDropdown(false);
+
+        // FETCH ADDITIONAL DETAILS IF ORG & MISSING CONTACT OR PERSON & MISSING LOCATION
+        const isPipedrive = selectedOption.source === 'pipedrive' || selectedOption.pipedriveId;
+        const pipedriveOrgId = selectedOption.type === 'organization' ? (selectedOption.externalId || selectedOption.id) : (selectedOption.org_id?.value || selectedOption.org_id);
+
+        if (isPipedrive && pipedriveOrgId && profile?.organization_id) {
+            const needsPerson = selectedOption.type === 'organization' && !selectedOption.contactName;
+            const needsLocation = !selectedOption.city && !selectedOption.address;
+
+            if (needsPerson || needsLocation) {
+                setIsSearchingClients(true);
+                try {
+                    console.log('🔍 Fetching additional details from Pipedrive:', { type: selectedOption.type, id: pipedriveOrgId });
+                    const details = await pipedriveService.getPersonDetails(pipedriveOrgId, profile.organization_id, 'organization');
+
+                    if (details.success && details.person) {
+                        console.log('✅ Found additional details:', details.person);
+
+                        // If we selected an Org, we might need the main contact person
+                        if (needsPerson && details.person.name) {
+                            selectedOption.contactName = details.person.name;
+                            if (!selectedOption.email || selectedOption.email.includes('pipedrivemail.com')) {
+                                const pEmail = details.person.email?.[0]?.value;
+                                if (pEmail) selectedOption.email = pEmail;
+                            }
+                        }
+
+                        // Always merge location data if found in Org
+                        if (details.person.address) {
+                            selectedOption.address = details.person.address;
+                        }
+                        if (details.person.city || details.person.address_city) {
+                            selectedOption.city = details.person.city || details.person.address_city;
+                        }
+
+                        // Merge all other possible fields for deep scan
+                        Object.assign(selectedOption, details.person);
+                    }
+                } catch (error) {
+                    console.error('Error fetching additional Pipedrive details:', error);
+                } finally {
+                    setIsSearchingClients(false);
+                }
+            }
+        }
 
         // If it's a CRM/Pipedrive client, we already have most data in selectedOption
         if (selectedOption.source === 'pipedrive' || selectedOption.source === 'crm' || selectedOption.pipedriveId) {
@@ -1105,17 +1189,31 @@ const QuoteBuilder = () => {
                                                     <div className="font-semibold text-gray-800 group-hover:text-orange-700">
                                                         {client.name}
                                                     </div>
-                                                    <div className="text-xs text-gray-500 flex flex-col gap-0.5 mt-1">
-                                                        {client.company && (
-                                                            <span className="flex items-center gap-1 font-medium text-gray-600">
-                                                                <Building2 size={12} /> {client.company}
-                                                            </span>
-                                                        )}
-                                                        {client.email && (
-                                                            <span className="flex items-center gap-1">
-                                                                <Mail size={12} /> {client.email}
-                                                            </span>
-                                                        )}
+                                                    <div className="text-xs text-gray-500 flex flex-col gap-1 mt-1">
+                                                        <div className="flex items-center gap-2">
+                                                            {client.source === 'interno' ? (
+                                                                <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-black uppercase border border-green-200">Local</span>
+                                                            ) : (
+                                                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-black uppercase border border-blue-200">Pipedrive</span>
+                                                            )}
+                                                            {client.company && (
+                                                                <span className="flex items-center gap-1 font-medium text-gray-600">
+                                                                    <Building2 size={12} /> {client.company}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            {client.email && (
+                                                                <span className="flex items-center gap-1">
+                                                                    <Mail size={12} /> {client.email}
+                                                                </span>
+                                                            )}
+                                                            {client.city && (
+                                                                <span className="flex items-center gap-1 text-orange-600 font-medium tracking-tight">
+                                                                    <MapPin size={12} /> {client.city}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </button>
                                             ))}
@@ -1167,13 +1265,23 @@ const QuoteBuilder = () => {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Ciudad / Comuna</label>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Comuna</label>
                             <input
                                 type="text"
                                 className="input-field w-full"
-                                placeholder="Ej: Santiago, Las Condes"
+                                placeholder="Ej: Las Condes"
                                 value={quoteData.clientCity || ''}
                                 onChange={(e) => updateField('clientCity', e.target.value)}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Región</label>
+                            <input
+                                type="text"
+                                className="input-field w-full"
+                                placeholder="Ej: Metropolitana"
+                                value={quoteData.clientRegion || ''}
+                                onChange={(e) => updateField('clientRegion', e.target.value)}
                             />
                         </div>
                         <div>
@@ -1193,7 +1301,27 @@ const QuoteBuilder = () => {
                                 className="input-field w-full"
                                 placeholder="+56 9 1234 5678"
                                 value={quoteData.clientPhone}
+                                onFocus={(e) => {
+                                    if (!quoteData.clientPhone || quoteData.clientPhone.trim() === '') {
+                                        setQuoteData(prev => ({ ...prev, clientPhone: '+56 ' }));
+                                    }
+                                }}
                                 onChange={(e) => updateField('clientPhone', e.target.value)}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Teléfono Empresa</label>
+                            <input
+                                type="tel"
+                                className="input-field w-full"
+                                placeholder="+56 2 ..."
+                                value={quoteData.clientCompanyPhone || ''}
+                                onFocus={(e) => {
+                                    if (!quoteData.clientCompanyPhone || quoteData.clientCompanyPhone.trim() === '') {
+                                        setQuoteData(prev => ({ ...prev, clientCompanyPhone: '+56 ' }));
+                                    }
+                                }}
+                                onChange={(e) => updateField('clientCompanyPhone', e.target.value)}
                             />
                         </div>
                     </div>

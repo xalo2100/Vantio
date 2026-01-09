@@ -16,6 +16,14 @@ export const sendQuoteEmail = async (quote, customMessage = '') => {
         const htmlContent = generateQuoteEmailHTML(quote, micrositeUrl, customMessage);
         const textContent = generateQuoteEmailText(quote, micrositeUrl, customMessage);
 
+        // Fetch organization settings for email
+        const orgId = quote.organization_id || quote.organizationId;
+        const { data: settings } = await supabase
+            .from('organization_settings')
+            .select('resend_api_key, resend_from_email')
+            .eq('organization_id', orgId)
+            .single();
+
         // Call Supabase Edge Function
         const { data, error } = await supabase.functions.invoke('send-quote-email', {
             body: {
@@ -25,15 +33,26 @@ export const sendQuoteEmail = async (quote, customMessage = '') => {
                 text: textContent,
                 quoteId: quote.id,
                 quoteNumber: quote.quoteNumber,
-                organizationId: quote.organization_id || quote.organizationId,
+                organizationId: orgId,
                 replyTo: quote.salesEmail,
-                fromName: quote.salesPerson
+                fromName: quote.salesPerson,
+                resendApiKey: settings?.resend_api_key,
+                resendFromEmail: quote.salesEmail || settings?.resend_from_email
             }
         });
 
         if (error) {
             console.error('Error sending email:', error);
-            return { success: false, error: error.message };
+            // Try to extract more info if it's a Supabase error with context
+            let detail = error.message;
+            if (error.context && typeof error.context.json === 'function') {
+                try {
+                    const errorBody = await error.context.json();
+                    if (errorBody.resendError?.message) detail = `${errorBody.resendError.message}`;
+                    else if (errorBody.error) detail = errorBody.error;
+                } catch (e) { /* ignore */ }
+            }
+            return { success: false, error: detail };
         }
 
         return { success: true, data };

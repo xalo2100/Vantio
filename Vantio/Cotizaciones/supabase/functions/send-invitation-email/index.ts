@@ -12,7 +12,7 @@ serve(async (req) => {
     }
 
     try {
-        const { email, inviteLink, organizationName, organizationId, invitedByName } = await req.json()
+        const { email, inviteLink, organizationName, organizationId, invitedByName, invitedByEmail, resendApiKey, resendFromEmail } = await req.json()
 
         if (!email || !inviteLink || !organizationId) {
             throw new Error('Missing required fields')
@@ -23,18 +23,53 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
         )
 
-        // Get Resend API Key from organization_settings
+        // Get Resend API Key and From Email from organization_settings
+        let apiToken = resendApiKey?.trim()
+        let fromEmail = resendFromEmail?.trim()
+
         const { data: settings } = await supabaseAdmin
             .from('organization_settings')
-            .select('resend_api_key')
+            .select('resend_api_key, resend_from_email')
             .eq('organization_id', organizationId)
             .single()
 
-        const resendKey = settings?.resend_api_key || Deno.env.get('RESEND_API_KEY')
+        console.log(`[DEBUG] Request check - apiToken from body: ${apiToken ? 'PRESENT' : 'EMPTY'}, fromEmail from body: ${fromEmail}`)
+
+        if (!apiToken || apiToken === '********') {
+            apiToken = settings?.resend_api_key?.trim()
+            console.log(`[DEBUG] API Key source: Database`)
+        } else {
+            console.log(`[DEBUG] API Key source: Request Body`)
+        }
+
+        if (!fromEmail || fromEmail === 'onboarding@resend.dev') {
+            fromEmail = settings?.resend_from_email || 'onboarding@resend.dev'
+            console.log(`[DEBUG] fromEmail source: Database/Default (${fromEmail})`)
+        } else {
+            console.log(`[DEBUG] fromEmail source: Request Body (${fromEmail})`)
+        }
+
+        // Smart fallback: If using default onboarding domain but we have an inviter email, use it.
+        // Resend requires a verified domain to send to external recipients.
+        if (fromEmail === 'onboarding@resend.dev' && invitedByEmail && invitedByEmail.includes('@')) {
+            fromEmail = invitedByEmail
+            console.log(`[DEBUG] Using smart fallback (Inviter Email): ${fromEmail}`)
+        }
+
+        const resendKey = apiToken || Deno.env.get('RESEND_API_KEY')?.trim()
 
         if (!resendKey) {
-            console.error('RESEND_API_KEY not found')
+            console.error('[DEBUG] FATAL: Resend Key not found anywhere')
             throw new Error('Email service not configured. Please add Resend API Key in Settings.')
+        }
+
+        console.log(`[DEBUG] Final configuration - from: ${fromEmail}, to: ${email}, hasKey: ${!!resendKey}`)
+
+        // Normalize fromEmail domain to lowercase to match Resend's verification
+        if (fromEmail && fromEmail.includes('@')) {
+            const [local, domain] = fromEmail.split('@')
+            fromEmail = `${local}@${domain.toLowerCase()}`
+            console.log(`[DEBUG] Normalized fromEmail: ${fromEmail}`)
         }
 
         const subject = `Invitación para unirte a ${organizationName || 'el equipo'}`
@@ -46,7 +81,7 @@ serve(async (req) => {
                 'Authorization': `Bearer ${resendKey}`,
             },
             body: JSON.stringify({
-                from: `${organizationName || 'Alfapack'} <onboarding@resend.dev>`,
+                from: `${organizationName || 'Alfapack'} <${fromEmail}>`,
                 to: [email],
                 subject: subject,
                 html: `
@@ -75,18 +110,30 @@ serve(async (req) => {
             }),
         })
 
-        const result = await res.json()
+        const data = await res.json()
 
         if (!res.ok) {
-            throw new Error(`Resend Error: ${JSON.stringify(result)}`)
+            console.error('[DEBUG] Resend API error response:', data)
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: data.message || 'Failed to send email',
+                    details: data
+                }),
+                {
+                    status: res.status,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                }
+            )
         }
 
-        return new Response(JSON.stringify({ success: true, result }), {
+        return new Response(JSON.stringify({ success: true, data }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     } catch (error) {
-        console.error('Error sending invitation:', error)
-        return new Response(JSON.stringify({ success: false, error: error.message }), {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[DEBUG] Catch error sending invitation:', error)
+        return new Response(JSON.stringify({ success: false, error: message }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })

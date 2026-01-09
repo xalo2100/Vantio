@@ -11,6 +11,8 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
         email: '',
         phone: '',
         city: '',
+        region: '',
+        company_phone: '',
         address: '',
         internal_notes: '',
         sync_to_crm: true
@@ -30,22 +32,24 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
                 ...clientData,
                 organization_id: organizationId,
                 rut: formData.rut?.trim() === '' ? null : formData.rut.trim(),
-                email: formData.email?.trim().toLowerCase(),
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
+                company_phone: formData.company_phone?.trim() === '' ? null : formData.company_phone.trim(),
+                email: formData.email?.trim().toLowerCase()
             };
 
-            console.log('📝 Attempting to insert client:', insertData);
+            console.log('📝 Attempting to upsert client:', insertData);
 
-            // 2. Guardar en Supabase
+            // 2. Guardar en Supabase (Usar upsert para manejar duplicados de RUT)
             const { data: newClient, error: supabaseError } = await supabase
                 .from('clients')
-                .insert([insertData])
+                .upsert([insertData], {
+                    onConflict: 'organization_id,rut',
+                    ignoreDuplicates: false
+                })
                 .select()
                 .single();
 
             if (supabaseError) {
-                console.error('❌ Supabase Insertion Error:', supabaseError);
+                console.error('❌ Supabase Upsert Error:', supabaseError);
                 throw new Error(supabaseError.message || 'Error de base de datos');
             }
 
@@ -53,8 +57,7 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
             if (formData.sync_to_crm) {
                 try {
                     // Llamar a la Edge Function de sincronización
-                    // Nota: Esta función ya existe pero la reforzaremos para usar el sellerEmail correctamente
-                    await supabase.functions.invoke('sync-client-to-pipedrive', {
+                    const { data: syncData, error: syncError } = await supabase.functions.invoke('sync-client-to-pipedrive', {
                         body: {
                             clientName: formData.name,
                             clientEmail: formData.email,
@@ -62,12 +65,31 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
                             clientPhone: formData.phone,
                             clientRut: formData.rut,
                             clientCity: formData.city,
+                            clientRegion: formData.region,
+                            companyPhone: formData.company_phone,
                             clientAddress: formData.address,
                             sellerEmail: sellerEmail,
                             organizationId: organizationId,
                             quoteId: 'NEW_CLIENT'
                         }
                     });
+
+                    if (syncError) throw syncError;
+
+                    if (syncData?.debug) {
+                        const { detected_fields } = syncData.debug;
+                        const missing = [];
+                        if (!detected_fields.rut) missing.push('RUT');
+                        if (!detected_fields.comuna) missing.push('Comuna');
+                        if (!detected_fields.region) missing.push('Región');
+
+                        if (missing.length > 0) {
+                            console.log('⚠️ Campos no detectados en Pipedrive:', missing);
+                            alert(`⚠️ Sincronizado, pero no se encontraron estos campos en Pipedrive: ${missing.join(', ')}. Por favor, envíame una foto de los "Detalles" de la organización en Pipedrive para verificar los nombres exactos.`);
+                        } else {
+                            alert('✅ Cliente sincronizado correctamente con todos los campos en Pipedrive.');
+                        }
+                    }
                 } catch (crmError) {
                     console.error('Error syncing to CRM, but client saved locally:', crmError);
                     alert(`Cliente guardado localmente, pero hubo un error sincronizando con el CRM: ${crmError.message}`);
@@ -87,6 +109,8 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
                 email: '',
                 phone: '',
                 city: '',
+                region: '',
+                company_phone: '',
                 address: '',
                 internal_notes: '',
                 sync_to_crm: true
@@ -154,6 +178,11 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
                                     className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium bg-stone-50"
                                     placeholder="+56 9 ..."
                                     value={formData.phone}
+                                    onFocus={(e) => {
+                                        if (!formData.phone || formData.phone.trim() === '') {
+                                            setFormData({ ...formData, phone: '+56 ' });
+                                        }
+                                    }}
                                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                                 />
                             </div>
@@ -185,13 +214,38 @@ const CreateClientModal = ({ isOpen, onClose, onClientCreated, organizationId, s
                                 />
                             </div>
                             <div className="space-y-1">
-                                <label className="text-xs font-bold text-stone-500 uppercase ml-1">Ciudad / Región</label>
+                                <label className="text-xs font-bold text-stone-500 uppercase ml-1">Comuna</label>
                                 <input
                                     type="text"
                                     className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium bg-stone-50"
                                     placeholder="Ej: Concepción"
                                     value={formData.city}
                                     onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-stone-500 uppercase ml-1">Región</label>
+                                <input
+                                    type="text"
+                                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium bg-stone-50"
+                                    placeholder="Ej: Biobío"
+                                    value={formData.region}
+                                    onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-stone-500 uppercase ml-1">Teléfono Empresa</label>
+                                <input
+                                    type="tel"
+                                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium bg-stone-50"
+                                    placeholder="+56 2 ..."
+                                    value={formData.company_phone}
+                                    onFocus={(e) => {
+                                        if (!formData.company_phone || formData.company_phone.trim() === '') {
+                                            setFormData({ ...formData, company_phone: '+56 ' });
+                                        }
+                                    }}
+                                    onChange={(e) => setFormData({ ...formData, company_phone: e.target.value })}
                                 />
                             </div>
                         </div>

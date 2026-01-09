@@ -1,4 +1,5 @@
 import React from 'react';
+// Trigger HMR refresh to sync with QuoteContext
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';

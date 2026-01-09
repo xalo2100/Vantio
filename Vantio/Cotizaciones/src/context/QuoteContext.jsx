@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+// Trigger HMR refresh to ensure QuoteContext symbol is consistent across modules
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { useRole } from '../hooks/useRole';
@@ -120,7 +121,7 @@ export const QuoteProvider = ({ children }) => {
         try {
             const newQuote = {
                 user_id: user.id,
-                quote_number: quoteData.quote_number || quoteData.quoteNumber || `QT-${Date.now().toString().slice(-6)}`,
+                quote_number: quoteData.quote_number || quoteData.quoteNumber || null,
                 // Robust mapping: Check camelCase AND snake_case AND possible fallbacks
                 client_name: quoteData.clientName || quoteData.client_name || 'Cliente Genérico',
                 client_email: quoteData.clientEmail || quoteData.client_email || 'sin@email.com',
@@ -144,6 +145,8 @@ export const QuoteProvider = ({ children }) => {
                 // Add missing fields to ensure persistence
                 client_rut: quoteData.clientRut || quoteData.rut,
                 client_city: quoteData.clientCity || quoteData.city,
+                client_region: quoteData.clientRegion || quoteData.region,
+                client_company_phone: quoteData.clientCompanyPhone || quoteData.company_phone,
                 client_address: quoteData.clientAddress || quoteData.address,
                 client_contact: quoteData.clientContact || quoteData.contactName || quoteData.contact_name
             };
@@ -194,51 +197,51 @@ export const QuoteProvider = ({ children }) => {
             };
 
             setQuotes(prev => [optimisticQuote, ...prev]);
-            try {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('organization_id')
-                    .eq('id', user.id)
-                    .single();
 
-                const { data: orgSettings } = await supabase
-                    .from('organization_settings')
-                    .select('pipedrive_sync_enabled')
-                    .eq('organization_id', profile.organization_id)
-                    .single();
+            // Background sync
+            (async () => {
+                try {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('organization_id')
+                        .eq('id', user.id)
+                        .single();
 
-                if (orgSettings?.pipedrive_sync_enabled) {
-                    console.log('Syncing client and quote to Pipedrive...');
+                    const { data: orgSettings } = await supabase
+                        .from('organization_settings')
+                        .select('pipedrive_sync_enabled')
+                        .eq('organization_id', profile.organization_id)
+                        .single();
 
-                    // First, sync client to Pipedrive (with vendor assignment)
-                    supabase.functions.invoke('sync-client-to-pipedrive', {
-                        body: {
-                            quoteId: data.id,
-                            clientName: quoteData.clientName,
-                            clientEmail: quoteData.clientEmail,
-                            companyName: quoteData.companyName,
-                            clientPhone: quoteData.clientPhone,
-                            clientRut: quoteData.clientRut || quoteData.rut,
-                            clientCity: quoteData.clientCity || quoteData.city,
-                            clientAddress: quoteData.clientAddress || quoteData.address,
-                            sellerEmail: user.email,
-                            organizationId: profile.organization_id
-                        }
-                    }).then(res => {
-                        console.log('Client sync result:', res);
+                    if (orgSettings?.pipedrive_sync_enabled) {
+                        console.log('🔄 [QuoteContext] Starting background sync to Pipedrive...');
 
-                        // Then, sync quote as deal to Pipedrive
-                        return pipedriveService.syncQuoteToPipedrive(data.id, user.email);
-                    }).then(res => {
-                        console.log('Quote sync result:', res);
-                    }).catch(err => {
-                        console.error('Pipedrive sync error:', err);
-                    });
+                        // 1. Sync Client first
+                        const clientSyncRes = await pipedriveService.syncClientToPipedrive(
+                            data.id,
+                            {
+                                name: quoteData.clientName,
+                                email: quoteData.clientEmail,
+                                company: quoteData.companyName,
+                                phone: quoteData.clientPhone,
+                                rut: quoteData.clientRut || quoteData.rut,
+                                city: quoteData.clientCity || quoteData.city,
+                                address: quoteData.clientAddress || quoteData.address
+                            },
+                            user.email,
+                            profile.organization_id
+                        );
+
+                        console.log('👤 [QuoteContext] Client sync result:', clientSyncRes);
+
+                        // 2. Sync Quote as Deal
+                        const quoteSyncRes = await pipedriveService.syncQuoteToPipedrive(data.id, user.email);
+                        console.log('💰 [QuoteContext] Quote sync result:', quoteSyncRes);
+                    }
+                } catch (syncError) {
+                    console.error('❌ [QuoteContext] Pipedrive background sync error:', syncError);
                 }
-            } catch (syncError) {
-                console.error('Error checking Pipedrive settings:', syncError);
-            }
-
+            })();
 
             return formattedQuote;
         } catch (error) {
@@ -288,28 +291,49 @@ export const QuoteProvider = ({ children }) => {
             if (error) throw error;
 
             // Sync to Pipedrive if enabled (Background process)
-            try {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('organization_id')
-                    .eq('id', user.id)
-                    .single();
+            (async () => {
+                try {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('organization_id')
+                        .eq('id', user.id)
+                        .single();
 
-                const { data: orgSettings } = await supabase
-                    .from('organization_settings')
-                    .select('pipedrive_sync_enabled')
-                    .eq('organization_id', profile.organization_id)
-                    .single();
+                    const { data: orgSettings } = await supabase
+                        .from('organization_settings')
+                        .select('pipedrive_sync_enabled')
+                        .eq('organization_id', profile.organization_id)
+                        .single();
 
-                if (orgSettings?.pipedrive_sync_enabled) {
-                    console.log('Syncing updated quote to Pipedrive...');
-                    pipedriveService.syncQuoteToPipedrive(id, user.email)
-                        .then(res => console.log('Quote update sync result:', res))
-                        .catch(err => console.error('Pipedrive update sync error:', err));
+                    if (orgSettings?.pipedrive_sync_enabled) {
+                        console.log('🔄 [QuoteContext] Starting background UPDATE sync to Pipedrive...');
+
+                        // 1. Sync Client (updates person if data changed)
+                        const clientSyncRes = await pipedriveService.syncClientToPipedrive(
+                            id,
+                            {
+                                name: updates.clientName,
+                                email: updates.clientEmail,
+                                company: updates.companyName,
+                                phone: updates.clientPhone,
+                                rut: updates.clientRut || updates.rut,
+                                city: updates.clientCity || updates.city,
+                                address: updates.clientAddress || updates.address
+                            },
+                            user.email,
+                            profile.organization_id
+                        );
+
+                        console.log('👤 [QuoteContext] Update Client sync result:', clientSyncRes);
+
+                        // 2. Sync Quote as Deal
+                        const quoteSyncRes = await pipedriveService.syncQuoteToPipedrive(id, user.email);
+                        console.log('💰 [QuoteContext] Update Quote sync result:', quoteSyncRes);
+                    }
+                } catch (syncError) {
+                    console.error('❌ [QuoteContext] Pipedrive update background sync error:', syncError);
                 }
-            } catch (syncError) {
-                console.error('Error checking Pipedrive settings on update:', syncError);
-            }
+            })();
         } catch (error) {
             console.error('Error updating quote:', error);
             throw error;
@@ -360,7 +384,13 @@ export const QuoteProvider = ({ children }) => {
             paymentTerms: quote.payment_terms || quote.paymentTerms,
 
             deliveryTime: quote.delivery_time || quote.deliveryTime,
-            companyName: quote.company_name || quote.companyName
+            companyName: quote.company_name || quote.companyName,
+            clientRut: quote.client_rut || quote.clientRut,
+            clientCity: quote.client_city || quote.clientCity,
+            clientRegion: quote.client_region || quote.clientRegion,
+            clientCompanyPhone: quote.client_company_phone || quote.clientCompanyPhone,
+            clientAddress: quote.client_address || quote.clientAddress,
+            clientPhone: quote.client_phone || quote.clientPhone
         };
     };
 
@@ -401,9 +431,15 @@ export const QuoteProvider = ({ children }) => {
                 currency: q.currency,
                 exchangeRate: parseFloat(q.exchange_rate || 1.0),
                 paymentTerms: q.payment_terms || q.paymentTerms,
-
                 deliveryTime: q.delivery_time || q.deliveryTime,
-                companyName: q.company_name || q.companyName
+                companyName: q.company_name || q.companyName,
+                clientRegion: q.client_region || q.clientRegion,
+                clientCompanyPhone: q.client_company_phone || q.clientCompanyPhone,
+                organization_id: q.organization_id || q.organizationId,
+                organizationId: q.organization_id || q.organizationId,
+                salesPerson: q.seller?.full_name || q.sellerName,
+                salesEmail: q.seller?.email || q.sellerEmail,
+                clientPhone: q.client_phone || q.clientPhone
             })),
             loading,
             addQuote,

@@ -145,7 +145,7 @@ const Analytics = () => {
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <MetricCard
-                    title="Ingresos Totales"
+                    title="Ingresos Aceptados"
                     value={kpis?.totalRevenue || 0}
                     previousValue={previousKpis?.totalRevenue}
                     icon={DollarSign}

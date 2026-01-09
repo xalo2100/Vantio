@@ -39,18 +39,34 @@ const stripHtml = (html) => {
 };
 
 const fetchImageAsBase64 = async (url) => {
+  if (!url) return null;
+
+  const fetchWithRetry = async (targetUrl, isProxy = false) => {
+    try {
+      const response = await fetch(targetUrl);
+      if (!response.ok) throw new Error(`Status ${response.status}`);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      if (!isProxy) {
+        console.warn(`⚠️ Direct fetch failed for ${url}, trying proxy...`);
+        // Using wsrv.nl as a reliable, free CORS proxy for images
+        const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
+        return fetchWithRetry(proxyUrl, true);
+      }
+      throw error;
+    }
+  };
+
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    return await fetchWithRetry(url);
   } catch (error) {
-    console.error('Error fetching image base64:', error);
+    console.error("❌ Failed to convert image to Base64:", error);
     return null;
   }
 };
@@ -108,7 +124,7 @@ const formatCurrency = (amount, currency = 'CLP', showSymbol = true) => {
   if (currency === 'CLP') {
     return (showSymbol ? '$ ' : '') + Math.round(amount || 0).toLocaleString('es-CL');
   }
-  const symbol = currency === 'EUR' ? '€' : 'U$D';
+  const symbol = currency === 'EUR' ? '€' : 'USD';
   return (showSymbol ? symbol + ' ' : '') + (amount || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).replace(',', '.');
 };
 
@@ -211,25 +227,40 @@ export const generateQuotePDF = async (quoteData, branding = {}, template = 'tec
       }
     }
 
-    // Process Product Image if available (for the first item)
-    console.log("🔍 Checking for Product Image:", quote.items?.[0]?.productMainImage);
-    if (quote.items?.[0]?.productMainImage) {
-      try {
-        const url = quote.items[0].productMainImage;
-        const base64 = await fetchImageAsBase64(url);
-        if (base64) {
-          quote.productImageBase64 = base64;
-          // dummy load to get dims
-          const img = new Image();
-          img.src = base64;
-          await new Promise(r => img.onload = r);
-          quote.productImageWidth = img.width;
-          quote.productImageHeight = img.height;
-          console.log("✅ Product Image Loaded (Fetch):", { w: img.width, h: img.height });
+    // Process Product Image if available (Pre-fetch for ALL items)
+    console.log("🔍 Checking for Product Images for", (quote.items || []).length, "items");
+
+    // Helper to fetch keys for a single item
+    const enrichItemWithImage = async (item) => {
+      if (item.productMainImage) {
+        try {
+          const url = item.productMainImage;
+          const base64 = await fetchImageAsBase64(url);
+          if (base64) {
+            item.imageBase64 = base64;
+            // dummy load to get dims
+            const img = new Image();
+            img.src = base64;
+            await new Promise(r => img.onload = r);
+            item.imageWidth = img.width;
+            item.imageHeight = img.height;
+            console.log(`✅ Product Image Loaded for ${item.name || 'Unknown'}:`, { w: img.width, h: img.height });
+          }
+        } catch (e) {
+          console.warn("❌ Could not load product image:", e);
         }
-      } catch (e) {
-        console.warn("❌ Could not load product image:", e);
       }
+      return item;
+    };
+
+    if (quote.items && quote.items.length > 0) {
+      // Parallel pre-fetch
+      await Promise.all(quote.items.map(enrichItemWithImage));
+
+      // Backward compatibility: Set top-level image/specs from first item for Metadata
+      quote.productImageBase64 = quote.items[0].imageBase64;
+      quote.productImageWidth = quote.items[0].imageWidth;
+      quote.productImageHeight = quote.items[0].imageHeight;
     }
 
     // --- PAGE 1: METADATA & SPECS ---
@@ -274,119 +305,215 @@ export const generateQuotePDF = async (quoteData, branding = {}, template = 'tec
     doc.line(margin, metadataY, pageWidth - margin, metadataY);
     metadataY += 12;
 
-    // Standardized Font Size: 10.5 for uniformity
-    doc.setFontSize(10.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(0);
-    doc.text("Equipo", margin, metadataY);
-    doc.setTextColor(...colors.blue);
-    const itemName = quote.items?.[0]?.name || quote.projectName || 'EQUIPO';
-    doc.text(`: ${String(itemName).toUpperCase()}`, margin + 35, metadataY); // Aligned with metadata
-    metadataY += 8;
+    // --- RENDER PRODUCTS LOOP ---
+    // We define a helper to render a SINGLE product block
+    const drawProductBlock = (item, startY) => {
+      let currentY = startY;
 
-    doc.setTextColor(0);
-    doc.text("Modelo", margin, metadataY);
-    doc.setTextColor(...colors.blue);
-    const modelName = quote.items?.[0]?.productModel || quote.items?.[0]?.name || 'N/A';
-    doc.text(`: ${modelName}`, margin + 35, metadataY); // Aligned with metadata
-    metadataY += 10;
+      // Title Block
+      doc.setFontSize(10.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0);
+      doc.text("Equipo", margin, currentY);
+      doc.setTextColor(...colors.blue);
+      // FIX: Check description first, as QuoteBuilder saves product name there
+      const itemName = item.description || item.name || quote.projectName || 'EQUIPO';
+      doc.text(`: ${String(itemName).toUpperCase()}`, margin + 35, currentY);
+      currentY += 8;
 
-    doc.setDrawColor(...colors.blue);
-    doc.setLineWidth(1.2);
-    doc.line(margin, metadataY, pageWidth - margin, metadataY);
-    metadataY += 15;
+      doc.setTextColor(0);
+      doc.text("Modelo", margin, currentY);
+      doc.setTextColor(...colors.blue);
+      doc.setTextColor(...colors.blue);
+      const modelName = item.productModel || item.name || 'N/A';
+      doc.text(`: ${modelName}`, margin + 35, currentY);
+      currentY += 10;
 
-    doc.setFontSize(10.5); // Standardized
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(0);
-    doc.text("Especificaciones:", margin, metadataY);
-    metadataY += 8;
+      doc.setDrawColor(...colors.blue);
+      doc.setLineWidth(1.2);
+      doc.line(margin, currentY, pageWidth - margin, currentY);
+      currentY += 15;
 
+      doc.setFontSize(10.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0);
+      doc.text("Especificaciones:", margin, currentY);
+      currentY += 8;
 
-    // Specifications List (LEFT COLUMN)
-    const hasProductImage = !!quote.productImageBase64;
+      // --- 2-COLUMN LAYOUT LOGIC ---
+      const gap = 10;
+      const colWidth = (pageWidth - (margin * 2) - gap) / 2;
+      const col1X = margin;
+      const col2X = margin + colWidth + gap;
 
-    // Force 2 columns if image exists: Specs (55%) | Image (45%)
-    const col1Width = hasProductImage ? (pageWidth * 0.55) - margin : pageWidth - (margin * 2);
-    const col2X = margin + col1Width + 10;
+      // Calculate max Y allowing for footer safety (~40 units)
+      const maxY = pageHeight - 40;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(60);
-    const rawSpecs = quote.items?.[0]?.productTechnicalSpecs || "";
-    const cleanSpecsLines = stripHtml(rawSpecs).split('\n').filter(s => s.trim() !== "");
+      const rawSpecs = item.productTechnicalSpecs || "";
+      const cleanSpecsLines = stripHtml(rawSpecs).split('\n').filter(s => s.trim() !== "");
 
-    // Draw Specs
-    const specsStartY = metadataY;
-    let currentSpecY = metadataY;
+      // Track layout state
+      let currentColX = col1X;
+      let runningY = currentY;
+      let columnTopY = currentY; // Track top of the current column to align image later if needed
 
-    cleanSpecsLines.slice(0, 18).forEach((s) => {
-      const lineText = s.trim();
-      // Increase bullet hanging indent
-      const wrappedLines = doc.splitTextToSize(lineText, col1Width - 5);
+      cleanSpecsLines.forEach(s => {
+        // Clean pre-existing bullets/hyphens from the text to avoid "• • Text"
+        let lineText = s.trim().replace(/^[\s\u2022\u00b7\-\*]+/, '').trim();
 
-      doc.setTextColor(...colors.orange);
-      doc.text("•", margin, currentSpecY);
+        const wrappedLines = doc.splitTextToSize(lineText, colWidth - 8); // Adjust width for new padding
+        const blockHeight = (wrappedLines.length * 5) + 3;
 
-      doc.setTextColor(60);
-      doc.text(wrappedLines, margin + 5, currentSpecY);
+        // Check Overflow
+        if (runningY + blockHeight > maxY) {
+          if (currentColX === col1X) {
+            // Switch to Column 2 on SAME PAGE
+            currentColX = col2X;
+            runningY = columnTopY; // Start at the top of this column block
+          } else {
+            // Both columns full -> Add NEW PAGE
+            drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
+            doc.addPage();
+            drawHeader(doc, quote, colors, pageWidth, margin);
 
-      currentSpecY += (wrappedLines.length * 5) + 3; // More breathing room
-    });
-
-    // Draw Image (RIGHT COLUMN)
-    if (hasProductImage) {
-      try {
-        // Center image in the right column
-        const availableWidth = pageWidth - col2X - margin;
-        const availableHeight = 85; // Max height similar to specs block
-
-        let imgWidth = availableWidth;
-        let imgHeight = 80;
-
-        if (quote.productImageWidth && quote.productImageHeight) {
-          const ratio = quote.productImageWidth / quote.productImageHeight;
-          imgHeight = imgWidth / ratio;
-
-          if (imgHeight > availableHeight) {
-            imgHeight = availableHeight;
-            imgWidth = imgHeight * ratio;
+            // Reset layout state for new page
+            currentColX = col1X;
+            runningY = 75;
+            columnTopY = 75;
           }
         }
 
-        // Center horizontally in its column
-        const finalX = col2X + ((availableWidth - imgWidth) / 2);
-        // Align top with specs
-        const finalY = specsStartY;
+        doc.setTextColor(...colors.orange);
+        doc.text("•", currentColX, runningY);
 
-        // Determine format from base64 header
-        let format = 'PNG';
-        if (quote.productImageBase64.includes('image/jpeg') || quote.productImageBase64.includes('image/jpg')) {
-          format = 'JPEG';
-        }
-        // Note: getDataUri forces PNG, so this is mostly defensive if source logic changes
+        doc.setTextColor(60);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        // Increased gap from +5 to +8 for cleaner look
+        doc.text(wrappedLines, currentColX + 8, runningY);
 
-        console.log("✍️ Drawing Product Image:", {
-          format,
-          finalX: finalX.toFixed(2),
-          finalY: finalY.toFixed(2),
-          w: imgWidth.toFixed(2),
-          h: imgHeight.toFixed(2)
-        });
+        runningY += blockHeight;
+      });
 
+      // --- IMAGE PLACEMENT (Col 2, below text) ---
+      if (item.imageBase64) {
         try {
-          doc.addImage(quote.productImageBase64, format, finalX, finalY, imgWidth, imgHeight);
-        } catch (innerImgErr) {
-          console.error("Failed to render image with specific format, trying fallback...", innerImgErr);
-          // Fallback without specifying format/compression
-          doc.addImage(quote.productImageBase64, finalX, finalY, imgWidth, imgHeight);
-        }
-      } catch (e) {
-        console.error("Image draw error", e);
-      }
-    }
+          // Determine Image Y Position
+          let imgX = col2X;
+          let imgY;
 
-    // End of image block replacement
+          if (currentColX === col1X) {
+            // Specs finished in Col 1, so Col 2 is empty on this page.
+            // Place image at the top of Col 2
+            imgY = columnTopY;
+          } else {
+            // Specs finished in Col 2. Place image AFTER the last text.
+            imgY = runningY + 5;
+          }
+
+          // Calculate Dimensions
+          const availableWidth = colWidth;
+          const availableHeight = 85;
+          let imgWidth = availableWidth;
+          let imgHeight = 80;
+
+          if (item.imageWidth && item.imageHeight) {
+            const ratio = item.imageWidth / item.imageHeight;
+            imgHeight = imgWidth / ratio;
+
+            if (imgHeight > availableHeight) {
+              imgHeight = availableHeight;
+              imgWidth = imgHeight * ratio;
+            }
+          }
+
+          // Center horizontally in Column 2
+          const finalX = imgX + ((availableWidth - imgWidth) / 2);
+
+          // Check if Image fits in remaining space
+          if (imgY + imgHeight > maxY) {
+            // Overflow -> New Page
+            drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
+            doc.addPage();
+            drawHeader(doc, quote, colors, pageWidth, margin);
+
+            // Place image at top of Col 2 on new page (per user request for Col 2)
+            imgY = 75;
+            // Re-calculate finalX just in case (same logic though)
+          }
+
+          let format = 'PNG';
+          if (item.imageBase64.includes('image/jpeg') || item.imageBase64.includes('image/jpg')) {
+            format = 'JPEG';
+          }
+
+          try {
+            doc.addImage(item.imageBase64, format, finalX, imgY, imgWidth, imgHeight);
+
+            // --- NEW: VIDEO LINK (Below Image) ---
+            if (item.productVideoUrl) {
+              const videoY = imgY + imgHeight + 6;
+              if (videoY + 10 < maxY) {
+                doc.setFontSize(9);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(...colors.blue);
+                const videoText = "Ver Video de Funcionamiento >";
+                doc.text(videoText, finalX + (imgWidth / 2), videoY, { align: 'center' });
+
+                // Add link
+                doc.link(finalX, videoY - 4, imgWidth, 6, { url: item.productVideoUrl });
+
+                // Add underline
+                doc.setDrawColor(...colors.blue);
+                doc.setLineWidth(0.5);
+                const textWidth = doc.getTextWidth(videoText);
+                doc.line(finalX + (imgWidth / 2) - (textWidth / 2), videoY + 1, finalX + (imgWidth / 2) + (textWidth / 2), videoY + 1);
+              }
+            }
+          } catch (innerImgErr) {
+            doc.addImage(item.imageBase64, finalX, imgY, imgWidth, imgHeight);
+          }
+        } catch (e) {
+          console.error("Image draw error", e);
+        }
+      } else if (item.productVideoUrl) {
+        // IF NO IMAGE but HAS VIDEO, show video link in Col 2
+        let imgX = col2X;
+        let imgY = columnTopY;
+
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...colors.blue);
+        const videoText = "Ver Video de Funcionamiento >";
+        doc.text(videoText, imgX + (colWidth / 2), imgY + 5, { align: 'center' });
+        doc.link(imgX, imgY, colWidth, 10, { url: item.productVideoUrl });
+
+        // Underline
+        doc.setDrawColor(...colors.blue);
+        doc.setLineWidth(0.5);
+        const textWidth = doc.getTextWidth(videoText);
+        doc.line(imgX + (colWidth / 2) - (textWidth / 2), imgY + 6, imgX + (colWidth / 2) + (textWidth / 2), imgY + 6);
+      }
+    };
+
+    // Render Items
+    const itemsToRender = quote.items && quote.items.length > 0 ? quote.items : [{ name: 'Sin Items' }];
+
+    itemsToRender.forEach((item, index) => {
+      // First item goes on the first page immediately after metadata
+      if (index === 0) {
+        drawProductBlock(item, metadataY);
+      } else {
+        // Subsequent items get a fresh page
+        drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
+        doc.addPage();
+        drawHeader(doc, quote, colors, pageWidth, margin);
+        // Start deeper to skip space where metadata was
+        drawProductBlock(item, 75);
+      }
+    });
+
+    // End of items iteration
 
     drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
 
@@ -474,7 +601,7 @@ export const generateQuotePDF = async (quoteData, branding = {}, template = 'tec
     autoTable(doc, {
       startY: 84,
       body: [
-        [{ content: "Valor del equipo", styles: { fillColor: colors.lightBlue, fontStyle: 'bold', textColor: 50, cellWidth: 50, fontSize: 9 } }, `${formatCurrency(quote.total || 0, quote.currency)} + IVA`],
+        [{ content: "Valor del proyecto", styles: { fillColor: colors.lightBlue, fontStyle: 'bold', textColor: 50, cellWidth: 50, fontSize: 9 } }, `${formatCurrency(quote.total || 0, quote.currency)} + IVA`],
         [{ content: "Forma de pago", styles: { fillColor: colors.lightBlue, fontStyle: 'bold', textColor: 50, fontSize: 9 } }, quote.paymentTerms || "Contado"],
         [{ content: "Disponibilidad", styles: { fillColor: colors.lightBlue, fontStyle: 'bold', textColor: 50, fontSize: 9 } }, quote.deliveryTime || "Inmediata"]
       ],
@@ -503,12 +630,33 @@ export const generateQuotePDF = async (quoteData, branding = {}, template = 'tec
     // AUTOMATICALLY EXTRACT "Validez" line to move it to Notes if present
     let rawConditions = quote.conditions || quote.salesTerms || "";
 
-    // 1. VALIDEZ: Keep it in place but make it BOLD (**Text**)
-    // Regex to find "Validez de la oferta..." and wrap it in **
-    const validezRegex = /(Validez de la oferta.*?)(?=\n|$|<\/p>|<br>)/i;
-    // We only replace to wrap in asterisks, we do NOT remove it.
-    if (validezRegex.test(rawConditions)) {
-      rawConditions = rawConditions.replace(validezRegex, "**$1**");
+    // 1. VALIDEZ: Dynamic Calculation based on 'validUntil'
+    if (quote.validUntil) {
+      const today = new Date();
+      const validDate = new Date(quote.validUntil);
+
+      // Reset hours to ensure clean day difference
+      today.setHours(0, 0, 0, 0);
+      validDate.setHours(0, 0, 0, 0);
+
+      const diffTime = validDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      const validityText = diffDays > 0 ? `${diffDays} días` : "Vencida";
+
+      // Regex to find "Validez de la oferta..." and REPLACE the value
+      // Matches "Validez de la oferta: <anything until newline>"
+      const validezReplaceRegex = /(Validez de la oferta\s*[:\.]?\s*)(.*?)(\.?\s*)(?=\n|$|<\/p>|<br>)/i;
+
+      if (validezReplaceRegex.test(rawConditions)) {
+        rawConditions = rawConditions.replace(validezReplaceRegex, `**$1${validityText}**$3`);
+      }
+    } else {
+      // Fallback if no validUntil set: Just Bold it
+      const validezRegex = /(Validez de la oferta.*?)(?=\n|$|<\/p>|<br>)/i;
+      if (validezRegex.test(rawConditions)) {
+        rawConditions = rawConditions.replace(validezRegex, "**$1**");
+      }
     }
 
     // 2. STRIP MANUAL BANK INFO (User dislikes the "simple" text version, prefers our Auto Block)
@@ -530,72 +678,64 @@ export const generateQuotePDF = async (quoteData, branding = {}, template = 'tec
     let currentY = ly + 8;
     const footerMargin = 40; // Increased safety margin for footer
 
-    legalLines.forEach(line => {
+    legalLines.forEach((line, index) => {
       let trimmed = line.trim();
       let isBold = false;
 
-      // Check for BOLD marker (**Text**)
-      // We look for roughly the pattern **...** but be careful of split lines
-      // Simple heuristic: if the raw line from split starts/ends with **, treat as title
-      // But wrapping might split it. 
-      // Better: check if the PARAGRAPH (line) was marked bold.
-      // Improved Bold Detection: Check inclusion, not just start/end
+      // Improved Bold Detection
       if (trimmed.includes('**')) {
         isBold = true;
-        trimmed = trimmed.replace(/\*\*/g, '').trim(); // Regex strip all asterisks
+        trimmed = trimmed.replace(/\*\*/g, '').trim();
       }
 
       if (trimmed === "") {
-        // Only add space if we are not at the top of a page (Y=75 is start)
+        // Standard paragraph gap
         if (currentY > 75) currentY += 4;
         return;
       }
 
-      if (isBold) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9); // Slightly larger/same for bold
-      } else {
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8.5);
+      // Check pagination BEFORE drawing
+      const estimatedLines = doc.splitTextToSize(trimmed, pageWidth - (margin * 2)).length;
+      if (currentY + (estimatedLines * 4) > pageHeight - footerMargin) {
+        drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
+        doc.addPage();
+        drawHeader(doc, quote, colors, pageWidth, margin);
+        currentY = 75;
       }
 
+      if (isBold) {
+        // Highlight Header: Add gap BEFORE header if not at top
+        if (currentY > 75) currentY += 5;
 
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(0, 0, 0); // Headers in Black
 
-      const lSplit = doc.splitTextToSize(trimmed, pageWidth - (margin * 2));
+        doc.text(trimmed, margin, currentY);
+        currentY += 4; // Tight gap to text below
+      } else {
+        // Body Text: Grey and Tighter spacing
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(80); // Body in Grey
 
-      // Iterate over each wrapped line to ensure page breaks happen EXACTLY where needed
-      lSplit.forEach((splitLine, index) => {
-        // Check if adding this single line would exceed margins
-        if (currentY + 5 > pageHeight - 50) {
-          drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
-          doc.addPage();
-          drawHeader(doc, quote, colors, pageWidth, margin);
-          currentY = 75;
-          // Reset font state after page break if needed (though jspdf keeps it)
-          // CRITICAL FIX: drawHeader sets textColor to White. We must reset it to Grey.
-          doc.setTextColor(80);
-          if (isBold) {
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(9);
-          } else {
+        const lSplit = doc.splitTextToSize(trimmed, pageWidth - (margin * 2));
+        lSplit.forEach(splitLine => {
+          // Check pagination per line just in case (though block check handles most)
+          if (currentY + 4 > pageHeight - footerMargin) {
+            drawFooter(doc, pageWidth, pageHeight, colors, brandingInfo, margin);
+            doc.addPage();
+            drawHeader(doc, quote, colors, pageWidth, margin);
+            currentY = 75;
             doc.setFont("helvetica", "normal");
             doc.setFontSize(8.5);
+            doc.setTextColor(80);
           }
-        }
-
-        doc.text(splitLine, margin, currentY, {
-          align: 'left',
-          maxWidth: pageWidth - (margin * 2),
-          lineHeightFactor: 1.15
+          doc.text(splitLine, margin, currentY, { align: 'justify', maxWidth: pageWidth - (margin * 2) });
+          currentY += 3.5; // Tighter line spacing (3.5 vs 4)
         });
-        currentY += 4; // Line spacing
-      });
-
-      // Reset font back to normal just in case
-      doc.setFont("helvetica", "normal");
-
-      // Add extra spacing after paragraph ends
-      currentY += 2;
+        currentY += 2; // Small gap after paragraph
+      }
     });
 
     // --- RENDER ADDITIONAL NOTES ---

@@ -343,7 +343,8 @@ export class PipedriveAdapter implements CRMAdapter {
 
             // 3. Phone Detection
             const isPhoneField = label.includes('tel') || label.includes('cel') || label.includes('phon') || keyLower.includes('phone') || label.includes('whatsapp');
-            const phoneMatch = stringVal.match(/(\+?\d[\d\s\-]{7,15})/);
+            // FIX: Increased limit from 15 to 60 chars to allow multiple numbers (e.g., "975169912 - 982110136")
+            const phoneMatch = stringVal.match(/(\+?\d[\d\s\-\(\)]{7,60})/);
 
             // PRIORITY FIX: Overwrite if we find a Better Candidate
             if ((!contactPhone || !phoneIsExplicit) && (isPhoneField || phoneMatch)) {

@@ -33,7 +33,7 @@ const formatCurrency = (amount, currency = 'CLP') => {
   if (currency === 'CLP') {
     return '$ ' + Math.round(amount).toLocaleString('es-CL');
   }
-  const symbol = currency === 'EUR' ? '€' : 'U$D';
+  const symbol = currency === 'EUR' ? '€' : 'USD';
   return symbol + ' ' + amount.toLocaleString('es-CL', { minimumFractionDigits: 2 });
 };
 

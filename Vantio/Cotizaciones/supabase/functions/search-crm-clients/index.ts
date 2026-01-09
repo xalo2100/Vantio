@@ -43,37 +43,30 @@ serve(async (req) => {
         }
 
         // --- INTERNAL SEARCH ---
-        // Also check if internal CRM is enabled in organization_settings
-        const { data: settings, error: settingsError } = await supabaseAdmin
-            .from('organization_settings')
-            .select('use_internal_crm')
+        // Always search local clients even if use_internal_crm is disabled in settings,
+        // because the user might have created them manually in the app.
+        const { data: localClients, error: localError } = await supabaseAdmin
+            .from('clients')
+            .select('*')
             .eq('organization_id', organizationId)
-            .single()
+            .or(`name.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%,rut.ilike.%${searchTerm}%`)
+            .limit(limit)
 
         let internalResults = []
-        if (!settingsError && settings?.use_internal_crm) {
-            const { data: localClients, error: localError } = await supabaseAdmin
-                .from('clients')
-                .select('*')
-                .eq('organization_id', organizationId)
-                .or(`name.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%,rut.ilike.%${searchTerm}%`)
-                .limit(limit)
-
-            if (!localError && localClients) {
-                internalResults = localClients.map(c => ({
-                    id: c.id,
-                    name: c.name,
-                    email: c.email,
-                    phone: c.phone,
-                    company: c.company,
-                    source: 'interno',
-                    // Map local fields to consistent CRM format
-                    rut: c.rut,
-                    city: c.city,
-                    address: c.address,
-                    notes: c.internal_notes
-                }))
-            }
+        if (!localError && localClients) {
+            internalResults = localClients.map(c => ({
+                id: c.id,
+                name: c.name,
+                email: c.email,
+                phone: c.phone,
+                company: c.company,
+                source: 'interno',
+                // Map local fields to consistent CRM format
+                rut: c.rut,
+                city: c.city,
+                address: c.address,
+                notes: c.internal_notes
+            }))
         }
 
         if ((!crmConfigs || crmConfigs.length === 0) && internalResults.length === 0) {
@@ -128,7 +121,7 @@ serve(async (req) => {
                 clients: finalClients,
                 count: finalClients.length,
                 sources: [
-                    ...(settings?.use_internal_crm ? ['interno'] : []),
+                    'interno',
                     ...crmConfigs.map(c => c.crm_type)
                 ]
             }),

@@ -254,7 +254,7 @@ const Microsite = () => {
                                         <div className="flex-1">
                                             <p className="text-petrol-800 font-semibold">{item.description}</p>
                                             <p className="text-sm text-gray-600 mt-1">
-                                                {item.quantity} × {quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D'} {item.unitPrice?.toLocaleString('es-CL')}
+                                                {item.quantity} × {quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD'} {item.unitPrice?.toLocaleString('es-CL')}
                                                 {quote.currency !== 'CLP' && quote.exchangeRate > 1 && (
                                                     <span className="block text-xs text-orange-600 font-medium">
                                                         Ref: $ {Math.round(item.unitPrice * quote.exchangeRate).toLocaleString('es-CL')}
@@ -264,7 +264,7 @@ const Microsite = () => {
                                         </div>
                                         <div className="text-right">
                                             <p className="text-lg font-bold text-petrol-800 ml-4">
-                                                {quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D'} {(item.quantity * item.unitPrice).toLocaleString('es-CL')}
+                                                {quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD'} {(item.quantity * item.unitPrice).toLocaleString('es-CL')}
                                             </p>
                                             {quote.currency !== 'CLP' && quote.exchangeRate > 1 && (
                                                 <p className="text-xs text-orange-600 font-medium">
@@ -284,7 +284,7 @@ const Microsite = () => {
                             <div className="flex justify-between text-petrol-700">
                                 <span>Subtotal:</span>
                                 <div className="text-right">
-                                    <p className="font-semibold">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D'} {quote.subtotal?.toLocaleString('es-CL')}</p>
+                                    <p className="font-semibold">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD'} {quote.subtotal?.toLocaleString('es-CL')}</p>
                                     {quote.currency !== 'CLP' && quote.exchangeRate > 1 && (
                                         <p className="text-xs text-orange-600 font-medium">Ref: $ {Math.round(quote.subtotal * quote.exchangeRate).toLocaleString('es-CL')}</p>
                                     )}
@@ -293,7 +293,7 @@ const Microsite = () => {
                             <div className="flex justify-between text-petrol-700">
                                 <span>IVA (19%):</span>
                                 <div className="text-right">
-                                    <p className="font-semibold">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D'} {quote.tax?.toLocaleString('es-CL')}</p>
+                                    <p className="font-semibold">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD'} {quote.tax?.toLocaleString('es-CL')}</p>
                                     {quote.currency !== 'CLP' && quote.exchangeRate > 1 && (
                                         <p className="text-xs text-orange-600 font-medium">Ref: $ {Math.round(quote.tax * quote.exchangeRate).toLocaleString('es-CL')}</p>
                                     )}
@@ -303,7 +303,7 @@ const Microsite = () => {
                             <div className="flex justify-between text-2xl font-bold">
                                 <span className="text-petrol-800">Total:</span>
                                 <div className="text-right">
-                                    <p className="text-orange-500">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D'} {quote.total?.toLocaleString('es-CL')}</p>
+                                    <p className="text-orange-500">{quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD'} {quote.total?.toLocaleString('es-CL')}</p>
                                     {quote.currency !== 'CLP' && quote.exchangeRate > 1 && (
                                         <p className="text-sm text-orange-600 font-bold">Total Ref. CLP: $ {Math.round(quote.total * quote.exchangeRate).toLocaleString('es-CL')}</p>
                                     )}

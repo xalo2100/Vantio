@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRole } from '../hooks/useRole';
 import RoleGuard from '../components/RoleGuard';
-import { Building2, User, Save, Upload, CheckCircle, Settings as SettingsIcon, Key, Link as LinkIcon, XCircle, Database, PlusCircle, Shield, Mail } from 'lucide-react';
+import { Building2, User, Save, Upload, CheckCircle, Settings as SettingsIcon, Key, Link as LinkIcon, XCircle, Database, PlusCircle, Shield, Mail, RotateCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { pipedriveService } from '../services/pipedriveService';
@@ -64,15 +64,31 @@ const Settings = () => {
     });
     const [showSkuInQuotes, setShowSkuInQuotes] = useState(true);
     const [resendApiKey, setResendApiKey] = useState('');
-    const [showResendKey, setShowResendKey] = useState(false);
+    const [resendFromEmail, setResendFromEmail] = useState('onboarding@resend.dev');
     const [cloudflareDatabaseId, setCloudflareDatabaseId] = useState('');
     const [cloudflareApiToken, setCloudflareApiToken] = useState('');
-    const [showCloudflareToken, setShowCloudflareToken] = useState(false);
 
-    const [showApiKey, setShowApiKey] = useState(false);
-    const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
-    const [showQwenKey, setShowQwenKey] = useState(false);
-    const [showZaiKey, setShowZaiKey] = useState(false);
+    // Appwrite State
+    const [appwriteEndpoint, setAppwriteEndpoint] = useState('');
+    const [appwriteProjectId, setAppwriteProjectId] = useState('');
+    const [appwriteDatabaseId, setAppwriteDatabaseId] = useState('');
+    const [appwriteApiKey, setAppwriteApiKey] = useState('');
+
+    const [showKeys, setShowKeys] = useState({
+        gemini: false,
+        openrouter: false,
+        qwen: false,
+        zai: false,
+        resend: false,
+        cloudflare: false,
+        supabase: false,
+        appwrite: false,
+    });
+
+    const toggleKeyVisibility = (keyName) => {
+        setShowKeys(prev => ({ ...prev, [keyName]: !prev[keyName] }));
+    };
+
     const [quoteHeaderBorderColor, setQuoteHeaderBorderColor] = useState('#6B7280');
     const [quoteLogoBgColor, setQuoteLogoBgColor] = useState('#FFFFFF');
     const [quoteLogoBgTransparent, setQuoteLogoBgTransparent] = useState(false);
@@ -89,7 +105,6 @@ const Settings = () => {
     // Database Connection Settings (Super Admin only)
     const [customSupabaseUrl, setCustomSupabaseUrl] = useState('');
     const [customSupabaseKey, setCustomSupabaseKey] = useState('');
-    const [showSupabaseKey, setShowSupabaseKey] = useState(false);
 
     // Multi-org state
     const [userOrgs, setUserOrgs] = useState([]);
@@ -174,6 +189,7 @@ const Settings = () => {
                 setQuoteLogoBgTransparent(data.quote_logo_bg_transparent || false);
                 setShowSkuInQuotes(data.show_sku_in_quotes !== undefined ? data.show_sku_in_quotes : true);
                 setResendApiKey(data.resend_api_key || '');
+                setResendFromEmail(data.resend_from_email || 'onboarding@resend.dev');
                 if (data.quote_logo_url) {
                     setQuoteLogo(data.quote_logo_url);
                 }
@@ -185,6 +201,10 @@ const Settings = () => {
                 setPipedriveFileSyncEnabled(data.pipedrive_file_sync_enabled !== undefined ? data.pipedrive_file_sync_enabled : true);
                 setCloudflareDatabaseId(data.cloudflare_database_id || '');
                 setCloudflareApiToken(data.cloudflare_api_token || '');
+                setAppwriteEndpoint(data.appwrite_endpoint || '');
+                setAppwriteProjectId(data.appwrite_project_id || '');
+                setAppwriteDatabaseId(data.appwrite_database_id || '');
+                setAppwriteApiKey(data.appwrite_api_key || '');
             }
         } catch (error) {
             console.error('Error:', error);
@@ -396,9 +416,19 @@ const Settings = () => {
             updates.sidebar_text_color = sidebarTextColor;
             updates.app_bg_color = appBgColor;
             updates.pipedrive_file_sync_enabled = pipedriveFileSyncEnabled;
+            updates.resend_api_key = resendApiKey;
+            updates.resend_from_email = resendFromEmail;
             updates.cloudflare_database_id = cloudflareDatabaseId;
             if (cloudflareApiToken && cloudflareApiToken !== '********') {
                 updates.cloudflare_api_token = cloudflareApiToken;
+            }
+
+            // Appwrite Settings
+            updates.appwrite_endpoint = appwriteEndpoint;
+            updates.appwrite_project_id = appwriteProjectId;
+            updates.appwrite_database_id = appwriteDatabaseId;
+            if (appwriteApiKey && appwriteApiKey !== '********') {
+                updates.appwrite_api_key = appwriteApiKey;
             }
 
             const { error } = await supabase
@@ -503,37 +533,51 @@ const Settings = () => {
         }, 5000);
     };
 
-    const handleTestResend = async () => {
+    const handleTestConnection = async (provider) => {
         if (!profile?.organization_id) return;
 
-        const provider = 'resend';
-        setTestStatuses(prev => ({ ...prev, [provider]: 'loading' }));
+        setTestStatuses(prev => ({ ...prev, [provider]: 'testing' }));
         setTestMessages(prev => ({ ...prev, [provider]: '' }));
 
         try {
-            const { data, error } = await supabase.functions.invoke('send-quote-email', {
-                body: {
-                    to: user.email,
-                    subject: "Prueba de Conexión Alfapack",
-                    html: "<p>Esta es una prueba de conexión exitosa desde tu configuración de Alfapack.</p>",
-                    text: "Esta es una prueba de conexión exitosa desde tu configuración de Alfapack.",
-                    organizationId: profile.organization_id,
-                    quoteId: 'test',
-                    quoteNumber: 'TEST-001'
+            if (provider === 'resend') {
+                const { data, error } = await supabase.functions.invoke('send-quote-email', {
+                    body: {
+                        to: user.email,
+                        subject: "Prueba de Conexión Alfapack",
+                        html: "<p>Esta es una prueba de conexión exitosa desde tu configuración de Alfapack.</p>",
+                        text: "Esta es una prueba de conexión exitosa desde tu configuración de Alfapack.",
+                        organizationId: profile.organization_id,
+                        quoteId: 'test',
+                        quoteNumber: 'TEST-001',
+                        resendApiKey: resendApiKey,
+                        resendFromEmail: resendFromEmail
+                    }
+                });
+
+                if (error) {
+                    let errorDetails = error.message;
+                    try {
+                        if (error.context && typeof error.context.json === 'function') {
+                            const json = await error.context.json();
+                            errorDetails = json.error || json.message || errorDetails;
+                            if (json.details) errorDetails += `: ${JSON.stringify(json.details)}`;
+                        }
+                    } catch (e) { }
+                    throw new Error(errorDetails);
                 }
-            });
 
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
+                if (data?.error) throw new Error(data.error + (data.details ? `: ${JSON.stringify(data.details)}` : ''));
 
-            setTestStatuses(prev => ({ ...prev, [provider]: 'success' }));
-            setTestMessages(prev => ({ ...prev, [provider]: 'Correo de prueba enviado a ' + user.email }));
+                setTestStatuses(prev => ({ ...prev, [provider]: 'success' }));
+                setTestMessages(prev => ({ ...prev, [provider]: 'Correo de prueba enviado a ' + user.email }));
+            }
         } catch (error) {
-            console.error(`Error testing Resend:`, error);
+            console.error(`Error testing ${provider}:`, error);
 
             let userMessage = error.message;
-            if (userMessage.includes('Failed to send') || userMessage.includes('fetch failed')) {
-                userMessage = 'La solicitud fue bloqueada por el navegador. Revisa el AdBlock/Escudos.';
+            if (error.name === 'TypeError' && (userMessage.includes('Failed to fetch') || userMessage.includes('fetch failed'))) {
+                userMessage = `El navegador bloqueó la conexión (posible AdBlock) o no hay conexión a internet. Error original: ${error.message}`;
             }
 
             setTestStatuses(prev => ({ ...prev, [provider]: 'error' }));
@@ -1181,7 +1225,7 @@ const Settings = () => {
                             </label>
                             <div className="relative">
                                 <input
-                                    type={showSupabaseKey ? 'text' : 'password'}
+                                    type={showKeys.supabase ? 'text' : 'password'}
                                     value={customSupabaseKey}
                                     onChange={(e) => setCustomSupabaseKey(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-red-500 focus:border-transparent pr-20"
@@ -1189,10 +1233,10 @@ const Settings = () => {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowSupabaseKey(!showSupabaseKey)}
+                                    onClick={() => toggleKeyVisibility('supabase')}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                 >
-                                    {showSupabaseKey ? 'Ocultar' : 'Mostrar'}
+                                    {showKeys.supabase ? 'Ocultar' : 'Mostrar'}
                                 </button>
                             </div>
                         </div>
@@ -1285,7 +1329,7 @@ const Settings = () => {
                             </label>
                             <div className="relative">
                                 <input
-                                    type={showApiKey ? 'text' : 'password'}
+                                    type={showKeys.gemini ? 'text' : 'password'}
                                     value={geminiApiKey}
                                     onChange={(e) => setGeminiApiKey(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-20"
@@ -1293,10 +1337,10 @@ const Settings = () => {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowApiKey(!showApiKey)}
+                                    onClick={() => toggleKeyVisibility('gemini')}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                 >
-                                    {showApiKey ? 'Ocultar' : 'Mostrar'}
+                                    {showKeys.gemini ? 'Ocultar' : 'Mostrar'}
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1327,7 +1371,7 @@ const Settings = () => {
                             </label>
                             <div className="relative">
                                 <input
-                                    type={showOpenRouterKey ? 'text' : 'password'}
+                                    type={showKeys.openrouter ? 'text' : 'password'}
                                     value={openrouterApiKey}
                                     onChange={(e) => setOpenrouterApiKey(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-20"
@@ -1335,10 +1379,10 @@ const Settings = () => {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowOpenRouterKey(!showOpenRouterKey)}
+                                    onClick={() => toggleKeyVisibility('openrouter')}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                 >
-                                    {showOpenRouterKey ? 'Ocultar' : 'Mostrar'}
+                                    {showKeys.openrouter ? 'Ocultar' : 'Mostrar'}
                                 </button>
                             </div>
                             <TestButton
@@ -1359,7 +1403,7 @@ const Settings = () => {
                             </label>
                             <div className="relative">
                                 <input
-                                    type={showQwenKey ? 'text' : 'password'}
+                                    type={showKeys.qwen ? 'text' : 'password'}
                                     value={qwenApiKey}
                                     onChange={(e) => setQwenApiKey(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-20"
@@ -1367,10 +1411,10 @@ const Settings = () => {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowQwenKey(!showQwenKey)}
+                                    onClick={() => toggleKeyVisibility('qwen')}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                 >
-                                    {showQwenKey ? 'Ocultar' : 'Mostrar'}
+                                    {showKeys.qwen ? 'Ocultar' : 'Mostrar'}
                                 </button>
                             </div>
                             <TestButton
@@ -1391,7 +1435,7 @@ const Settings = () => {
                             </label>
                             <div className="relative">
                                 <input
-                                    type={showZaiKey ? 'text' : 'password'}
+                                    type={showKeys.zai ? 'text' : 'password'}
                                     value={zaiApiKey}
                                     onChange={(e) => setZaiApiKey(e.target.value)}
                                     className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-20"
@@ -1399,10 +1443,10 @@ const Settings = () => {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowZaiKey(!showZaiKey)}
+                                    onClick={() => toggleKeyVisibility('zai')}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                 >
-                                    {showZaiKey ? 'Ocultar' : 'Mostrar'}
+                                    {showKeys.zai ? 'Ocultar' : 'Mostrar'}
                                 </button>
                             </div>
                             <TestButton
@@ -1413,39 +1457,77 @@ const Settings = () => {
                             />
                         </div>
 
-                        {/* Resend Key */}
+                        {/* Resend API Key and From Email */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                <div className="flex items-center gap-2">
-                                    <Mail size={16} className="text-orange-500" />
-                                    <span>API Key de Resend (Email Service)</span>
+                            <h4 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                                <Mail size={16} className="text-orange-500" />
+                                <span>Configuración de Email (Resend)</span>
+                            </h4>
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700 flex items-center gap-2 mb-2">
+                                            <Mail size={16} className="text-orange-500" />
+                                            API Key de Resend (Email Service)
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                type={showKeys.resend ? "text" : "password"}
+                                                value={resendApiKey}
+                                                onChange={(e) => setResendApiKey(e.target.value)}
+                                                className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-transparent pr-20"
+                                                placeholder="re_..."
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleKeyVisibility('resend')}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-500 hover:text-gray-700"
+                                            >
+                                                {showKeys.resend ? 'Ocultar' : 'Mostrar'}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700 flex items-center gap-2 mb-2">
+                                            <Mail size={16} className="text-blue-500" />
+                                            Email Remitente (Verificado en Resend)
+                                        </label>
+                                        <input
+                                            type="email"
+                                            value={resendFromEmail}
+                                            onChange={(e) => setResendFromEmail(e.target.value)}
+                                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="ej: cotizaciones@alfapack.cl"
+                                        />
+                                        {(!resendFromEmail || resendFromEmail === 'onboarding@resend.dev') && (
+                                            <p className="text-[10px] text-orange-600 font-bold mt-1">
+                                                ⚠️ DEBES cambiar esto por un correo de tu dominio (ej: cotizaciones@alfapack.cl) para enviar a externos.
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
-                            </label>
-                            <div className="relative">
-                                <input
-                                    type={showResendKey ? 'text' : 'password'}
-                                    value={resendApiKey}
-                                    onChange={(e) => setResendApiKey(e.target.value)}
-                                    className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-20"
-                                    placeholder="re_..."
-                                />
+
                                 <button
-                                    type="button"
-                                    onClick={() => setShowResendKey(!showResendKey)}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
+                                    onClick={() => handleTestConnection('resend')}
+                                    disabled={testStatuses.resend === 'testing' || !resendApiKey}
+                                    className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                                 >
-                                    {showResendKey ? 'Ocultar' : 'Mostrar'}
+                                    {testStatuses.resend === 'testing' ? (
+                                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                                    ) : (
+                                        <RotateCw size={14} className={testStatuses.resend === 'success' ? 'text-green-500' : ''} />
+                                    )}
+                                    Probar Envío (Email a {user.email})
                                 </button>
+
+                                {testMessages.resend && (
+                                    <div className={`p-3 rounded-lg text-xs font-medium ${testStatuses.resend === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                        }`}>
+                                        {testMessages.resend}
+                                    </div>
+                                )}
                             </div>
-                            <TestButton
-                                provider="resend"
-                                onTest={handleTestResend}
-                                status={testStatuses.resend}
-                                message={testMessages.resend}
-                            />
-                            <p className="text-[10px] text-gray-500 mt-1">
-                                Necesaria para enviar cotizaciones por email. Obtén una en <a href="https://resend.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 underline">resend.com</a>
-                            </p>
                         </div>
 
                         {/* Cloudflare DB Configuration */}
@@ -1473,7 +1555,7 @@ const Settings = () => {
                                     </label>
                                     <div className="relative">
                                         <input
-                                            type={showCloudflareToken ? 'text' : 'password'}
+                                            type={showKeys.cloudflare ? 'text' : 'password'}
                                             value={cloudflareApiToken}
                                             onChange={(e) => setCloudflareApiToken(e.target.value)}
                                             className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-20"
@@ -1481,10 +1563,10 @@ const Settings = () => {
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => setShowCloudflareToken(!showCloudflareToken)}
+                                            onClick={() => toggleKeyVisibility('cloudflare')}
                                             className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
                                         >
-                                            {showCloudflareToken ? 'Ocultar' : 'Mostrar'}
+                                            {showKeys.cloudflare ? 'Ocultar' : 'Mostrar'}
                                         </button>
                                     </div>
                                 </div>
@@ -1679,137 +1761,202 @@ const Settings = () => {
                                     </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Quote Header Border Color */}
-                        <div className="pt-6 border-t border-gray-100">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Color del Borde de Cotizaciones (PDF/Vista Previa)
-                            </label>
-                            <p className="text-xs text-gray-500 mb-2">
-                                Personaliza el color del borde en las cotizaciones
-                            </p>
-                            <div className="flex items-center gap-4">
-                                <input
-                                    type="color"
-                                    value={quoteHeaderBorderColor}
-                                    onChange={(e) => setQuoteHeaderBorderColor(e.target.value)}
-                                    className="h-10 w-20 rounded border border-gray-300 cursor-pointer shadow-sm"
-                                />
-                                <input
-                                    type="text"
-                                    value={quoteHeaderBorderColor}
-                                    onChange={(e) => setQuoteHeaderBorderColor(e.target.value)}
-                                    className="px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 font-mono text-sm w-32"
-                                    placeholder="#6B7280"
-                                />
-                                <div
-                                    className="w-10 h-10 rounded-lg border-2"
-                                    style={{ borderColor: quoteHeaderBorderColor }}
-                                />
-                            </div>
-                        </div>
+                            {/* Appwrite Configuration (Híbrida) */}
+                            <div className="space-y-6 pt-6 border-t border-gray-100">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="p-2 bg-pink-100 text-pink-600 rounded-lg">
+                                        <Database size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-petrol-800">Appwrite (Arquitectura Híbrida)</h3>
+                                        <p className="text-sm text-gray-500">Configura Appwrite como base de datos para alta velocidad.</p>
+                                    </div>
+                                </div>
 
-                        {/* Quote Logo Background Color */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Fondo del Logo en Cotización
-                            </label>
-                            <p className="text-xs text-gray-500 mb-2">
-                                Personaliza el fondo del recuadro del logo en el PDF.
-                            </p>
-                            <div className="flex items-center gap-4 mb-2">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={quoteLogoBgTransparent}
-                                        onChange={(e) => setQuoteLogoBgTransparent(e.target.checked)}
-                                        className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
-                                    />
-                                    <span className="text-sm text-gray-700">Fondo Transparente / Ocultar Recuadro</span>
-                                </label>
-                            </div>
-
-                            {
-                                !quoteLogoBgTransparent && (
-                                    <div className="flex items-center gap-4">
-                                        <input
-                                            type="color"
-                                            value={quoteLogoBgColor}
-                                            onChange={(e) => setQuoteLogoBgColor(e.target.value)}
-                                            className="h-10 w-20 rounded border border-gray-300 cursor-pointer"
-                                        />
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-11">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Appwrite Endpoint</label>
                                         <input
                                             type="text"
-                                            value={quoteLogoBgColor}
-                                            onChange={(e) => setQuoteLogoBgColor(e.target.value)}
-                                            className="px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-sm"
-                                            placeholder="#FFFFFF"
-                                            pattern="^#[0-9A-Fa-f]{6}$"
-                                        />
-                                        <div
-                                            className="w-10 h-10 rounded border-2 border-gray-300"
-                                            style={{ backgroundColor: quoteLogoBgColor }}
-                                            title="Vista previa del color"
+                                            className="w-full px-4 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-pink-500 outline-none transition-all font-medium"
+                                            placeholder="https://cloud.appwrite.io/v1"
+                                            value={appwriteEndpoint}
+                                            onChange={(e) => setAppwriteEndpoint(e.target.value)}
                                         />
                                     </div>
-                                )
-                            }
-                        </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Appwrite Project ID</label>
+                                        <input
+                                            type="text"
+                                            className="w-full px-4 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-pink-500 outline-none transition-all font-medium"
+                                            placeholder="project_id_..."
+                                            value={appwriteProjectId}
+                                            onChange={(e) => setAppwriteProjectId(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Appwrite Database ID</label>
+                                        <input
+                                            type="text"
+                                            className="w-full px-4 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-pink-500 outline-none transition-all font-medium"
+                                            placeholder="database_id_..."
+                                            value={appwriteDatabaseId}
+                                            onChange={(e) => setAppwriteDatabaseId(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Appwrite API Key</label>
+                                        <div className="relative">
+                                            <input
+                                                type={showKeys.appwrite ? "text" : "password"}
+                                                className="w-full px-4 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-pink-500 outline-none transition-all font-medium pr-10"
+                                                placeholder="sk_..."
+                                                value={appwriteApiKey}
+                                                onChange={(e) => setAppwriteApiKey(e.target.value)}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleKeyVisibility('appwrite')}
+                                                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                            >
+                                                {showKeys.appwrite ? <XCircle size={18} /> : <RotateCw size={18} />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
-                        {/* SKU Visibility setting */}
-                        <div className="pt-4 border-t border-purple-100">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Visibilidad de SKU
-                            </label>
-                            <p className="text-xs text-gray-500 mb-2">
-                                Decide si el código de producto (SKU) se muestra en las cotizaciones PDF y web.
-                            </p>
-                            <div className="flex items-center gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={showSkuInQuotes}
-                                        onChange={(e) => setShowSkuInQuotes(e.target.checked)}
-                                        className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
-                                    />
-                                    <span className="text-sm text-gray-700">Mostrar SKU en cotizaciones</span>
+                            {/* Quote Header Border Color */}
+                            <div className="pt-6 border-t border-gray-100">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Color del Borde de Cotizaciones (PDF/Vista Previa)
                                 </label>
+                                <p className="text-xs text-gray-500 mb-2">
+                                    Personaliza el color del borde en las cotizaciones
+                                </p>
+                                <div className="flex items-center gap-4">
+                                    <input
+                                        type="color"
+                                        value={quoteHeaderBorderColor}
+                                        onChange={(e) => setQuoteHeaderBorderColor(e.target.value)}
+                                        className="h-10 w-20 rounded border border-gray-300 cursor-pointer shadow-sm"
+                                    />
+                                    <input
+                                        type="text"
+                                        value={quoteHeaderBorderColor}
+                                        onChange={(e) => setQuoteHeaderBorderColor(e.target.value)}
+                                        className="px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 font-mono text-sm w-32"
+                                        placeholder="#6B7280"
+                                    />
+                                    <div
+                                        className="w-10 h-10 rounded-lg border-2"
+                                        style={{ borderColor: quoteHeaderBorderColor }}
+                                    />
+                                </div>
                             </div>
+
+                            {/* Quote Logo Background Color */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Fondo del Logo en Cotización
+                                </label>
+                                <p className="text-xs text-gray-500 mb-2">
+                                    Personaliza el fondo del recuadro del logo en el PDF.
+                                </p>
+                                <div className="flex items-center gap-4 mb-2">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={quoteLogoBgTransparent}
+                                            onChange={(e) => setQuoteLogoBgTransparent(e.target.checked)}
+                                            className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Fondo Transparente / Ocultar Recuadro</span>
+                                    </label>
+                                </div>
+
+                                {
+                                    !quoteLogoBgTransparent && (
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="color"
+                                                value={quoteLogoBgColor}
+                                                onChange={(e) => setQuoteLogoBgColor(e.target.value)}
+                                                className="h-10 w-20 rounded border border-gray-300 cursor-pointer"
+                                            />
+                                            <input
+                                                type="text"
+                                                value={quoteLogoBgColor}
+                                                onChange={(e) => setQuoteLogoBgColor(e.target.value)}
+                                                className="px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-sm"
+                                                placeholder="#FFFFFF"
+                                                pattern="^#[0-9A-Fa-f]{6}$"
+                                            />
+                                            <div
+                                                className="w-10 h-10 rounded border-2 border-gray-300"
+                                                style={{ backgroundColor: quoteLogoBgColor }}
+                                                title="Vista previa del color"
+                                            />
+                                        </div>
+                                    )
+                                }
+                            </div>
+
+                            {/* SKU Visibility setting */}
+                            <div className="pt-4 border-t border-purple-100">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Visibilidad de SKU
+                                </label>
+                                <p className="text-xs text-gray-500 mb-2">
+                                    Decide si el código de producto (SKU) se muestra en las cotizaciones PDF y web.
+                                </p>
+                                <div className="flex items-center gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={showSkuInQuotes}
+                                            onChange={(e) => setShowSkuInQuotes(e.target.checked)}
+                                            className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Mostrar SKU en cotizaciones</span>
+                                    </label>
+                                </div>
+                            </div>
+
                         </div>
 
+                        {
+                            message && (
+                                <div className={`p-4 mb-4 rounded-lg ${success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                    {message}
+                                </div>
+                            )
+                        }
+
+                        <button
+                            onClick={handleSaveAdvancedSettings}
+                            disabled={loading}
+                            className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {loading ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Guardando...</span>
+                                </>
+                            ) : success ? (
+                                <>
+                                    <CheckCircle size={18} />
+                                    <span>Guardado!</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Save size={18} />
+                                    <span>Guardar Cambios</span>
+                                </>
+                            )}
+                        </button>
                     </div>
-
-                    {
-                        message && (
-                            <div className={`p-4 mb-4 rounded-lg ${success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {message}
-                            </div>
-                        )
-                    }
-
-                    <button
-                        onClick={handleSaveAdvancedSettings}
-                        disabled={loading}
-                        className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? (
-                            <>
-                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                <span>Guardando...</span>
-                            </>
-                        ) : success ? (
-                            <>
-                                <CheckCircle size={18} />
-                                <span>Guardado!</span>
-                            </>
-                        ) : (
-                            <>
-                                <Save size={18} />
-                                <span>Guardar Cambios</span>
-                            </>
-                        )}
-                    </button>
                 </div>
             </RoleGuard>
 

@@ -158,7 +158,7 @@ const QuotesList = () => {
     }, [quotes, isAdmin]);
 
     const renderQuoteCard = (quote) => {
-        const symbol = quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'U$D';
+        const symbol = quote.currency === 'CLP' ? '$' : quote.currency === 'EUR' ? '€' : 'USD';
 
         return (
             <div

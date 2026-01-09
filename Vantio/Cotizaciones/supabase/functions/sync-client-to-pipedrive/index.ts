@@ -12,7 +12,7 @@ serve(async (req) => {
     }
 
     try {
-        const { quoteId, clientName, clientEmail, companyName, clientPhone, clientRut, clientCity, clientAddress, sellerEmail, organizationId } = await req.json()
+        const { quoteId, clientName, clientEmail, companyName, clientPhone, companyPhone, clientRut, clientCity, clientRegion, clientAddress, sellerEmail, organizationId } = await req.json()
 
         if (!clientEmail || !organizationId) {
             throw new Error('Missing required fields: clientEmail, organizationId')
@@ -46,13 +46,20 @@ serve(async (req) => {
         if (!apiToken || !companyDomain) {
             const { data: orgSettings } = await supabaseAdmin
                 .from('organization_settings')
-                .select('pipedrive_api_token, pipedrive_company_domain, pipedrive_sync_enabled')
+                .select('*') // Select all to avoid column name errors if missing
                 .eq('organization_id', organizationId)
                 .single()
 
             if (orgSettings) {
-                apiToken = apiToken || orgSettings.pipedrive_api_token
-                companyDomain = companyDomain || orgSettings.pipedrive_company_domain
+                apiToken = apiToken || orgSettings.pipedrive_api_token || orgSettings.pipedrive_api_key
+
+                // Extract domain from domain field or URL field
+                let domain = orgSettings.pipedrive_company_domain
+                if (!domain && orgSettings.pipedrive_url) {
+                    const match = orgSettings.pipedrive_url.match(/https?:\/\/([^.]+)\.pipedrive\.com/)
+                    domain = match ? match[1] : null
+                }
+                companyDomain = companyDomain || domain
                 syncEnabled = syncEnabled || orgSettings.pipedrive_sync_enabled
             }
         }
@@ -70,193 +77,213 @@ serve(async (req) => {
 
         const baseUrl = `https://${companyDomain}.pipedrive.com/api/v1`
 
-        // Step 1: Find seller in Pipedrive by email
+        // --- Helper Function for Field Mapping ---
+        const getFieldMap = async (endpoint: string) => {
+            const fieldMap: any = {}
+            const patterns = {
+                rut: ['rut', 'rut empresa', 'tax id', 'id fiscal'],
+                comuna: ['comuna', 'ciudad', 'city', 'localidad', 'municipio', 'distrito'],
+                region: ['región', 'region', 'estado', 'provincia', 'sector', 'departamento'],
+                email: ['email', 'correo', 'e-mail', 'mail'],
+                phone: ['telefono', 'teléfono', 'phone', 'celular', 'móvil', 'movil', 'tel', 'whatsapp'],
+                address: ['dirección', 'direccion', 'address', 'postal address', 'dirección postal']
+            }
+
+            try {
+                const res = await fetch(`${baseUrl}/${endpoint}?api_token=${apiToken}`)
+                const data = await res.json()
+                if (data.success && data.data) {
+                    data.data.forEach((f: any) => {
+                        const name = f.name.toLowerCase().trim()
+                        for (const [key, searchTerms] of Object.entries(patterns)) {
+                            // PRIORIDAD 1: Coincidencia EXACTA (para evitar falsos positivos)
+                            if (searchTerms.some(term => name === term)) {
+                                fieldMap[key] = f.key
+                                break
+                            }
+                        }
+                    })
+
+                    // PRIORIDAD 2: Coincidencia PARCIAL (solo si no hubo exacta)
+                    data.data.forEach((f: any) => {
+                        const name = f.name.toLowerCase().trim()
+                        for (const [key, searchTerms] of Object.entries(patterns)) {
+                            if (!fieldMap[key] && searchTerms.some(term => name.includes(term))) {
+                                fieldMap[key] = f.key
+                            }
+                        }
+                    })
+                }
+            } catch (error) {
+                console.error(`Error fetching ${endpoint}:`, error)
+            }
+            return fieldMap
+        }
+
+        // 2. Fetch Field Maps
+        const orgFieldsMap = await getFieldMap('organizationFields')
+        const personFieldsMap = await getFieldMap('personFields')
+
+        console.log('🔑 Org fields map:', orgFieldsMap)
+        console.log('🔑 Person fields map:', personFieldsMap)
+
+        // Step 1: Find seller in Pipedrive
         let ownerId = null
         if (sellerEmail) {
             try {
-                const userSearch = await fetch(
-                    `${baseUrl}/users/find?term=${encodeURIComponent(sellerEmail)}&api_token=${apiToken}`
-                )
-                const userData = await userSearch.json()
-
-                if (userData.success && userData.data && userData.data.length > 0) {
-                    const exactMatch = userData.data.find((u: any) =>
-                        u.email?.toLowerCase() === sellerEmail.toLowerCase()
+                const usersRes = await fetch(`${baseUrl}/users?api_token=${apiToken}`)
+                const usersData = await usersRes.json()
+                if (usersData.success && usersData.data) {
+                    const cleanEmail = sellerEmail.toLowerCase().trim()
+                    const seller = usersData.data.find((u: any) =>
+                        u.email?.toLowerCase().trim() === cleanEmail ||
+                        u.email?.toLowerCase().trim().split('@')[0] === cleanEmail.split('@')[0]
                     )
-                    ownerId = exactMatch?.id || userData.data[0]?.id
+                    if (seller) ownerId = seller.id
                 }
-            } catch (error) {
-                console.error('Error searching for seller:', error)
-            }
+            } catch (e) { console.error('Error fetching users:', e) }
         }
 
         // Step 2: Search or Create Organization
         let orgId = null
-        if (companyName) {
-            const orgSearch = await fetch(
-                `${baseUrl}/organizations/search?term=${encodeURIComponent(companyName)}&api_token=${apiToken}`
-            )
+        const orgPayload: any = {
+            owner_id: ownerId,
+            address: clientAddress || ''
+        }
+        if (clientRut && orgFieldsMap.rut) orgPayload[orgFieldsMap.rut] = clientRut
+        if (clientCity && orgFieldsMap.comuna) orgPayload[orgFieldsMap.comuna] = clientCity
+        if (clientRegion && orgFieldsMap.region) orgPayload[orgFieldsMap.region] = clientRegion
+        if (clientEmail && orgFieldsMap.email) orgPayload[orgFieldsMap.email] = clientEmail
+        if (companyPhone && orgFieldsMap.phone) orgPayload[orgFieldsMap.phone] = companyPhone
+
+        if (companyName && companyName.trim()) {
+            console.log(`🔍 Searching for organization: "${companyName.trim()}"`)
+            const orgSearch = await fetch(`${baseUrl}/organizations/search?term=${encodeURIComponent(companyName.trim())}&api_token=${apiToken}`)
             const orgData = await orgSearch.json()
 
-            if (orgData.success && orgData.data?.items && orgData.data.items.length > 0) {
+            if (orgData.success && orgData.data?.items?.length > 0) {
                 orgId = orgData.data.items[0].item.id
-                console.log(`Found existing organization: ${companyName} -> id: ${orgId}`)
+                console.log(`✅ Found existing organization: ${orgId}`)
+                orgPayload.name = companyName.trim()
+                const updateRes = await fetch(`${baseUrl}/organizations/${orgId}?api_token=${apiToken}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(orgPayload)
+                })
+                const updateData = await updateRes.json()
+                if (updateData.success && updateData.data?.id) {
+                    orgId = updateData.data.id
+                }
+                console.log(`📝 Organization update result:`, updateData.success ? 'Success' : 'Failed')
             } else {
-                // Create Organization
-                const createOrg = await fetch(
-                    `${baseUrl}/organizations?api_token=${apiToken}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            name: companyName,
-                            owner_id: ownerId,
-                            address: clientAddress || clientCity || ''
-                        })
-                    }
-                )
-                const orgResult = await createOrg.json()
-                if (orgResult.success) {
-                    orgId = orgResult.data.id
-                    console.log(`Created new organization: ${companyName} -> id: ${orgId}`)
+                console.log(`➕ Creating new organization: "${companyName.trim()}"`)
+                orgPayload.name = companyName.trim()
+                const createRes = await fetch(`${baseUrl}/organizations?api_token=${apiToken}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(orgPayload)
+                })
+                const resData = await createRes.json()
+                if (resData.success) {
+                    orgId = resData.data.id
+                    console.log(`✅ Organization created: ${orgId}`)
+                } else {
+                    console.error(`❌ Organization creation failed:`, resData)
                 }
             }
+        } else {
+            console.log('⚠️ No companyName provided, skipping Organization sync.')
         }
 
         // Step 3: Search or Create Person
-        const personSearch = await fetch(
-            `${baseUrl}/persons/search?term=${encodeURIComponent(clientEmail)}&fields=email&api_token=${apiToken}`
-        )
-        const personData = await personSearch.json()
-
+        console.log(`🔍 Searching for person: "${clientEmail}"`)
+        const personSearch = await fetch(`${baseUrl}/persons/search?term=${encodeURIComponent(clientEmail)}&fields=email&api_token=${apiToken}`)
+        const personSearchData = await personSearch.json()
         let person = null
-        if (personData.success && personData.data?.items && personData.data.items.length > 0) {
-            person = personData.data.items.find((item: any) => {
-                const emails = item.item.emails || []
-                return emails.some((e: any) => e.value?.toLowerCase() === clientEmail.toLowerCase())
-            })?.item
+        if (personSearchData.success && personSearchData.data?.items?.length > 0) {
+            person = personSearchData.data.items[0].item
         }
+
+        const personPayload: any = {
+            name: clientName || clientEmail.split('@')[0],
+            org_id: orgId,
+            owner_id: ownerId,
+            email: [{ value: clientEmail, primary: true, label: 'work' }],
+            phone: clientPhone ? [{ value: clientPhone, primary: true, label: 'work' }] : undefined
+        }
+        console.log(`📝 Person Payload with org_id ${orgId}:`, personPayload)
+
+        // Map custom fields for Person too
+        if (clientRut && personFieldsMap.rut) personPayload[personFieldsMap.rut] = clientRut
+        if (clientCity && personFieldsMap.comuna) personPayload[personFieldsMap.comuna] = clientCity
+        if (clientRegion && personFieldsMap.region) personPayload[personFieldsMap.region] = clientRegion
+        if (clientAddress && personFieldsMap.address) personPayload[personFieldsMap.address] = clientAddress
 
         let personId = null
         let action = 'none'
 
-        // Step 2.5: Find Custom Field Keys for Person
-        let rutFieldKey = null
-        try {
-            const fieldsRes = await fetch(`${baseUrl}/personFields?api_token=${apiToken}`)
-            const fieldsData = await fieldsRes.json()
-            if (fieldsData.success) {
-                const rutField = fieldsData.data.find((f: any) =>
-                    f.name.toLowerCase() === 'rut' ||
-                    f.name.toLowerCase().includes('tax id') ||
-                    f.name.toLowerCase().includes('identificación')
-                )
-                if (rutField) {
-                    rutFieldKey = rutField.key
-                    console.log(`🔑 Found custom RUT field key: ${rutFieldKey}`)
-                }
-            }
-        } catch (error) {
-            console.error('Error fetching person fields:', error)
-        }
-
         if (person) {
             personId = person.id
-            action = 'found'
-
-            // Update person if owner or org changed
-            const updatePayload: any = {}
-            if (ownerId && person.owner_id !== ownerId) updatePayload.owner_id = ownerId
-            if (orgId && person.org_id !== orgId) updatePayload.org_id = orgId
-            if (clientPhone && (!person.phone || person.phone.length === 0)) {
-                updatePayload.phone = [{ value: clientPhone, primary: true, label: 'work' }]
-            }
-            if (clientRut && rutFieldKey) {
-                updatePayload[rutFieldKey] = clientRut
-            }
-
-            if (Object.keys(updatePayload).length > 0) {
-                await fetch(
-                    `${baseUrl}/persons/${personId}?api_token=${apiToken}`,
-                    {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(updatePayload)
-                    }
-                )
-                action = 'updated'
-            }
+            await fetch(`${baseUrl}/persons/${personId}?api_token=${apiToken}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(personPayload)
+            })
+            action = 'updated'
         } else {
-            const createPersonData: any = {
-                name: clientName || clientEmail.split('@')[0],
-                email: [{ value: clientEmail, primary: true, label: 'work' }],
-                org_id: orgId,
-                owner_id: ownerId
-            }
-            if (clientPhone) {
-                createPersonData.phone = [{ value: clientPhone, primary: true, label: 'work' }]
-            }
-            if (clientRut && rutFieldKey) {
-                createPersonData[rutFieldKey] = clientRut
-            }
-
-            const createPerson = await fetch(
-                `${baseUrl}/persons?api_token=${apiToken}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(createPersonData)
-                }
-            )
-            const personResult = await createPerson.json()
-
-            if (personResult.success) {
-                personId = personResult.data.id
+            const createRes = await fetch(`${baseUrl}/persons?api_token=${apiToken}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(personPayload)
+            })
+            const resData = await createRes.json()
+            if (resData.success) {
+                personId = resData.data.id
                 action = 'created'
             }
         }
 
-        // Step 4: Update quote if quoteId is provided and NOT 'NEW_CLIENT'
+        // Step 4: Final update and log
         if (quoteId && quoteId !== 'NEW_CLIENT') {
-            await supabaseAdmin
-                .from('quotes')
-                .update({ pipedrive_person_id: personId })
-                .eq('id', quoteId)
+            await supabaseAdmin.from('quotes').update({ pipedrive_person_id: personId }).eq('id', quoteId)
         }
 
-        // Step 5: Log sync
-        await supabaseAdmin
-            .from('pipedrive_sync_log')
-            .insert([{
-                organization_id: organizationId,
-                entity_type: 'person',
-                entity_id: quoteId === 'NEW_CLIENT' ? 'CLIENT_CREATION' : quoteId,
-                pipedrive_id: personId,
-                action: action,
-                status: 'success',
-                metadata: {
-                    client_email: clientEmail,
-                    company_name: companyName,
-                    org_id: orgId,
-                    owner_id: ownerId
-                }
-            }])
+        await supabaseAdmin.from('pipedrive_sync_log').insert([{
+            organization_id: organizationId,
+            entity_type: 'person',
+            entity_id: quoteId === 'NEW_CLIENT' ? 'CLIENT_CREATION' : quoteId,
+            pipedrive_id: personId,
+            action: action,
+            status: 'success',
+            metadata: {
+                client_email: clientEmail,
+                company_name: companyName,
+                org_payload: orgPayload,
+                person_payload: personPayload
+            }
+        }])
 
-        return new Response(
-            JSON.stringify({
-                success: true,
-                personId: personId,
-                orgId: orgId,
-                action: action,
-                message: `Sync completed: ${action}`
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        )
-    } catch (error) {
+        return new Response(JSON.stringify({
+            success: true,
+            personId,
+            orgId,
+            action,
+            message: `Sync ${action}`,
+            debug: {
+                orgPayload,
+                personPayload
+            }
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
+    } catch (error: any) {
         console.error('Error:', error)
-        return new Response(
-            JSON.stringify({ success: false, error: error.message }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        )
+        return new Response(JSON.stringify({
+            success: false,
+            error: error.message,
+            stack: error.stack
+        }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
     }
 })

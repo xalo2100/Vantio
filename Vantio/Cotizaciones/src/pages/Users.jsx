@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRole } from '../hooks/useRole';
 import RoleGuard from '../components/RoleGuard';
-import { Users as UsersIcon, UserPlus, Mail, Search, Shield, X, Send, CheckCircle, Clock, Ban } from 'lucide-react';
+import { Users as UsersIcon, UserPlus, Mail, Search, Shield, X, Send, CheckCircle, Clock, Ban, RotateCw, Copy } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -21,6 +21,8 @@ const Users = () => {
         email: '',
         role: 'vendedor'
     });
+    const [resendingInviteId, setResendingInviteId] = useState(null);
+    const [copiedInviteId, setCopiedInviteId] = useState(null);
 
     useEffect(() => {
         if (profile?.organization_id) {
@@ -139,6 +141,13 @@ const Users = () => {
 
             // Trigger automated invitation email
             try {
+                // Fetch organization settings for email
+                const { data: settings } = await supabase
+                    .from('organization_settings')
+                    .select('resend_api_key, resend_from_email')
+                    .eq('organization_id', profile.organization_id)
+                    .single();
+
                 const inviteLink = `${window.location.origin}/invite/${token}`;
                 await supabase.functions.invoke('send-invitation-email', {
                     body: {
@@ -146,7 +155,10 @@ const Users = () => {
                         inviteLink: inviteLink,
                         organizationName: orgName || 'Su Empresa',
                         organizationId: profile.organization_id,
-                        invitedByName: profile.full_name || user.email
+                        invitedByName: profile.full_name || user.email,
+                        invitedByEmail: user.email,
+                        resendApiKey: settings?.resend_api_key,
+                        resendFromEmail: settings?.resend_from_email
                     }
                 });
                 alert(`¡Invitación enviada con éxito a ${inviteData.email}!`);
@@ -154,7 +166,17 @@ const Users = () => {
                 console.error('Error triggering invitation email:', emailError);
                 // Still show the link as fallback if email fails
                 const inviteLink = `${window.location.origin}/invite/${token}`;
-                alert(`Invitación creada en la base de datos, pero hubo un error al enviar el correo.\n\nPor favor comparte este link manualmente:\n${inviteLink}`);
+
+                // Extract error details if available
+                let errorMsg = emailError.message;
+                if (emailError.context && typeof emailError.context.json === 'function') {
+                    try {
+                        const errJson = await emailError.context.json();
+                        errorMsg = JSON.stringify(errJson);
+                    } catch (e) { }
+                }
+
+                alert(`⚠️ Invitación creada pero FALLÓ el envío del correo.\n\nError: ${errorMsg}\n\nPor favor comparte este link manualmente:\n${inviteLink}`);
             }
 
             handleCloseInviteModal();
@@ -226,6 +248,72 @@ const Users = () => {
             console.error('Error canceling invitation:', error);
             alert('Error al cancelar la invitación');
         }
+    };
+
+    const handleResendInvitation = async (invitation) => {
+        try {
+            setResendingInviteId(invitation.id);
+            const inviteLink = `${window.location.origin}/invite/${invitation.token}`;
+
+            // Update expiration date (another 7 days)
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7);
+
+            const { error: updateError } = await supabase
+                .from('invitations')
+                .update({ expires_at: expiresAt.toISOString() })
+                .eq('id', invitation.id);
+
+            if (updateError) throw updateError;
+
+            // Fetch organization settings for email
+            const { data: settings } = await supabase
+                .from('organization_settings')
+                .select('resend_api_key, resend_from_email')
+                .eq('organization_id', profile.organization_id)
+                .single();
+
+            const { data, error } = await supabase.functions.invoke('send-invitation-email', {
+                body: {
+                    email: invitation.email,
+                    inviteLink: inviteLink,
+                    organizationName: orgName || 'Su Empresa',
+                    organizationId: profile.organization_id,
+                    invitedByName: profile.full_name || user.email,
+                    invitedByEmail: user.email,
+                    resendApiKey: settings?.resend_api_key,
+                    resendFromEmail: settings?.resend_from_email
+                }
+            });
+
+            if (error) throw error;
+            if (data?.error) throw new Error(data.error);
+
+            alert(`✅ Invitación reenviada con éxito a ${invitation.email}. La validez se ha extendido por 7 días.`);
+            fetchInvitations();
+        } catch (error) {
+            console.error('Error resending invitation:', error);
+
+            let errorMessage = error.message;
+
+            if (error.context && typeof error.context.json === 'function') {
+                try {
+                    const body = await error.context.json();
+                    if (body.error) errorMessage = body.error;
+                } catch (e) { }
+            }
+
+            alert('❌ Error al reenviar la invitación: ' + errorMessage);
+        } finally {
+            setResendingInviteId(null);
+        }
+    };
+
+    const handleCopyInviteLink = (invitation) => {
+        const inviteLink = `${window.location.origin}/invite/${invitation.token}`;
+        navigator.clipboard.writeText(inviteLink);
+        setCopiedInviteId(invitation.id);
+        setTimeout(() => setCopiedInviteId(null), 2000);
     };
 
     // Filter users
@@ -449,15 +537,50 @@ const Users = () => {
                                                         {new Date(invitation.expires_at).toLocaleDateString('es-AR')}
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        {!invitation.accepted_at && (
-                                                            <button
-                                                                onClick={() => handleCancelInvitation(invitation.id)}
-                                                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                                title="Cancelar invitación"
-                                                            >
-                                                                <X size={18} />
-                                                            </button>
-                                                        )}
+                                                        <div className="flex items-center gap-1">
+                                                            {!invitation.accepted_at && (
+                                                                <>
+                                                                    <button
+                                                                        onClick={() => handleResendInvitation(invitation)}
+                                                                        disabled={resendingInviteId === invitation.id}
+                                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50 text-xs font-bold whitespace-nowrap"
+                                                                        title="Reenviar invitación por correo"
+                                                                    >
+                                                                        <RotateCw size={14} className={resendingInviteId === invitation.id ? 'animate-spin' : ''} />
+                                                                        {resendingInviteId === invitation.id ? 'Reenviando...' : 'Reenviar'}
+                                                                    </button>
+
+                                                                    <button
+                                                                        onClick={() => handleCopyInviteLink(invitation)}
+                                                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold whitespace-nowrap ${copiedInviteId === invitation.id
+                                                                            ? 'bg-green-100 text-green-700'
+                                                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                                            }`}
+                                                                        title="Copiar enlace de invitación"
+                                                                    >
+                                                                        {copiedInviteId === invitation.id ? (
+                                                                            <>
+                                                                                <CheckCircle size={14} />
+                                                                                ¡Copiado!
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <Copy size={14} />
+                                                                                Copiar Link
+                                                                            </>
+                                                                        )}
+                                                                    </button>
+
+                                                                    <button
+                                                                        onClick={() => handleCancelInvitation(invitation.id)}
+                                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                                        title="Cancelar invitación"
+                                                                    >
+                                                                        <X size={18} />
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             );

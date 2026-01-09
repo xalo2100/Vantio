@@ -8,7 +8,7 @@ import { insightsService } from '../services/insightsService';
 import InsightCard from '../components/InsightCard';
 import KaizenModal from '../components/KaizenModal';
 
-const StatCard = ({ title, value, change, icon: Icon, color }) => (
+const StatCard = ({ title, value, change, subValue, icon: Icon, color }) => (
     <div className="glass-panel p-6 rounded-xl card-hover">
         <div className="flex items-start justify-between">
             <div>
@@ -19,6 +19,11 @@ const StatCard = ({ title, value, change, icon: Icon, color }) => (
                 <Icon className="text-white" size={24} />
             </div>
         </div>
+        {subValue && (
+            <div className="mt-2 text-xs text-gray-500">
+                {subValue}
+            </div>
+        )}
         {change && (
             <div className="mt-4 flex items-center text-sm">
                 <span className="text-green-600 font-medium flex items-center gap-1">
@@ -110,12 +115,24 @@ const Dashboard = () => {
         fetchInsights(); // Refresh list
     };
 
-    // Calcular estadísticas reales
-    const totalRevenue = quotes.reduce((sum, quote) => sum + (quote.total || 0), 0);
-    const activeQuotes = quotes.filter(q => q.status === 'pending').length;
-    const acceptedQuotes = quotes.filter(q => q.status === 'accepted').length;
+    // Calcular estadísticas reales de forma robusta
+    const emittedQuotes = quotes.filter(q => {
+        const s = (q.status || '').toLowerCase();
+        return s === 'pending' || s === 'accepted';
+    });
+
+    const draftQuotes = quotes.filter(q => (q.status || '').toLowerCase() === 'draft');
+    const acceptedQuotesCount = quotes.filter(q => (q.status || '').toLowerCase() === 'accepted').length;
+    const pendingQuotesCount = quotes.filter(q => (q.status || '').toLowerCase() === 'pending').length;
+
+    const emittedRevenue = emittedQuotes.reduce((sum, quote) => sum + (quote.total || 0), 0);
+    const totalPotentialRevenue = quotes.reduce((sum, quote) => sum + (quote.total || 0), 0);
+    const draftRevenue = draftQuotes.reduce((sum, quote) => sum + (quote.total || 0), 0);
+
+    const activeQuotes = pendingQuotesCount;
+    const acceptedQuotes = acceptedQuotesCount;
     const conversionRate = quotes.length > 0 ? ((acceptedQuotes / quotes.length) * 100).toFixed(1) : 0;
-    const uniqueClients = new Set(quotes.map(q => q.clientEmail)).size;
+    const uniqueClients = new Set(quotes.map(q => q.clientEmail || q.client_email)).size;
 
     // Obtener las 5 cotizaciones más recientes
     const recentQuotes = [...quotes].slice(0, 5);
@@ -168,8 +185,9 @@ const Dashboard = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
-                    title="Ingresos Totales"
-                    value={`$${totalRevenue.toFixed(2)}`}
+                    title="Monto Emitido"
+                    value={`$${totalPotentialRevenue.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    subValue="Incluye borradores y cotizaciones pendientes"
                     change={null}
                     icon={DollarSign}
                     color="bg-green-500"

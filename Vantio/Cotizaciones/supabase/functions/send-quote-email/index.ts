@@ -16,6 +16,8 @@ interface EmailRequest {
     organizationId: string
     replyTo?: string
     fromName?: string
+    resendApiKey?: string
+    resendFromEmail?: string
 }
 
 serve(async (req) => {
@@ -25,7 +27,7 @@ serve(async (req) => {
     }
 
     try {
-        const { to, subject, html, text, quoteId, quoteNumber, organizationId, replyTo, fromName }: EmailRequest = await req.json()
+        const { to, subject, html, text, organizationId, quoteId, quoteNumber, resendApiKey, resendFromEmail, fromName, replyTo }: EmailRequest = await req.json()
 
         // Validate required fields
         if (!to || !subject || !html || !organizationId) {
@@ -55,14 +57,51 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
         )
 
-        // Get Resend API Key from organization_settings
+        // Get Resend API Key and From Email from organization_settings
+        let apiToken = resendApiKey?.trim()
+        let fromEmail = resendFromEmail?.trim()
+
         const { data: settings } = await supabaseAdmin
             .from('organization_settings')
-            .select('resend_api_key')
+            .select('resend_api_key, resend_from_email')
             .eq('organization_id', organizationId)
             .single()
 
-        const resendKey = settings?.resend_api_key || Deno.env.get('RESEND_API_KEY')
+        if (!apiToken || apiToken === '********') {
+            apiToken = settings?.resend_api_key?.trim()
+        }
+
+        // Logic for "From" email:
+        // 1. If resendFromEmail is provided and it's NOT the generic one, check if it's from a verified domain.
+        // 2. Otherwise use the organization's default.
+        const defaultFromEmail = settings?.resend_from_email || 'onboarding@resend.dev'
+
+        // If the caller explicitly passed a fromEmail (like the salesperson's email)
+        if (!fromEmail || fromEmail === 'onboarding@resend.dev') {
+            fromEmail = defaultFromEmail
+        }
+
+        // --- NEW: Domain Verification Check ---
+        // If we have a verified domain in settings (e.g. alfapack.cl), 
+        // and the current user's email belongs to it, we can use it as 'from'.
+        if (defaultFromEmail.includes('@')) {
+            const verifiedDomain = defaultFromEmail.split('@')[1].toLowerCase()
+            // If the provided fromEmail (e.g. from the salesperson) belongs to this domain
+            if (fromEmail.toLowerCase().endsWith(`@${verifiedDomain}`)) {
+                console.log(`✅ Using verified salesperson email: ${fromEmail}`)
+            } else {
+                console.log(`⚠️ Email ${fromEmail} does not belong to verified domain ${verifiedDomain}. Falling back to ${defaultFromEmail}`)
+                fromEmail = defaultFromEmail
+            }
+        }
+
+        const resendKey = apiToken || Deno.env.get('RESEND_API_KEY')?.trim()
+
+        // Normalize fromEmail domain to lowercase to match Resend's verification
+        if (fromEmail && fromEmail.includes('@')) {
+            const [local, domain] = fromEmail.split('@')
+            fromEmail = `${local}@${domain.toLowerCase()}`
+        }
 
         // Check if Resend API key is configured
         if (!resendKey) {
@@ -76,6 +115,10 @@ serve(async (req) => {
             )
         }
 
+        if (!fromEmail) {
+            throw new Error('From email could not be determined.')
+        }
+
         // Send email via Resend
         const res = await fetch('https://api.resend.com/emails', {
             method: 'POST',
@@ -84,7 +127,7 @@ serve(async (req) => {
                 'Authorization': `Bearer ${resendKey}`,
             },
             body: JSON.stringify({
-                from: `${fromName || 'Cotizaciones'} <onboarding@resend.dev>`,
+                from: `${fromName || 'Cotizaciones'} <${fromEmail}>`,
                 reply_to: replyTo,
                 to: [to],
                 subject: subject,
@@ -112,9 +155,13 @@ serve(async (req) => {
         if (!res.ok) {
             console.error('Resend API error:', data)
             return new Response(
-                JSON.stringify({ error: 'Failed to send email', details: data }),
+                JSON.stringify({
+                    error: 'Failed to send email via Resend',
+                    resendError: data,
+                    status: res.status
+                }),
                 {
-                    status: res.status,
+                    status: res.status === 422 ? 400 : 500, // Map 422 to 400 for better client handling
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 }
             )
@@ -135,9 +182,10 @@ serve(async (req) => {
         )
 
     } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
         console.error('Error in send-quote-email function:', error)
         return new Response(
-            JSON.stringify({ error: error.message }),
+            JSON.stringify({ error: message }),
             {
                 status: 500,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }

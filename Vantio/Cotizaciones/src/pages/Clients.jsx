@@ -7,6 +7,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useRole } from '../hooks/useRole';
+import { pipedriveService } from '../services/pipedriveService';
 
 const Clients = () => {
     const { user } = useAuth();
@@ -28,6 +29,7 @@ const Clients = () => {
         address: '',
         internal_notes: ''
     });
+    const [syncToCRM, setSyncToCRM] = useState(true);
 
     useEffect(() => {
         if (profile?.organization_id) {
@@ -92,8 +94,9 @@ const Clients = () => {
         try {
             const dataToSave = {
                 ...formData,
-                organization_id: profile.organization_id,
-                updated_at: new Date()
+                rut: formData.rut?.trim() === '' ? null : formData.rut?.trim(),
+                email: formData.email?.trim()?.toLowerCase(),
+                organization_id: profile.organization_id
             };
 
             if (editingClient) {
@@ -103,17 +106,38 @@ const Clients = () => {
                     .eq('id', editingClient.id);
                 if (error) throw error;
             } else {
+                // Use upsert to handle case where RUT already exists
                 const { error } = await supabase
                     .from('clients')
-                    .insert([dataToSave]);
+                    .upsert([dataToSave], { onConflict: 'organization_id,rut' });
                 if (error) throw error;
+            }
+
+            // Sync with CRM if enabled
+            if (syncToCRM) {
+                try {
+                    await pipedriveService.syncClientToPipedrive(
+                        'NEW_CLIENT',
+                        formData,
+                        user.email,
+                        profile.organization_id
+                    );
+                } catch (syncError) {
+                    console.error('Error syncing to CRM:', syncError);
+                    // We don't block the UI for sync errors after saving locally
+                    alert('Cliente guardado localmente, pero hubo un problema sincronizando con el CRM.');
+                }
             }
 
             setShowModal(false);
             fetchClients();
         } catch (error) {
             console.error('Error saving client:', error);
-            alert('Error al guardar el cliente');
+            if (error.code === '23505' || error.message?.includes('unique constraint')) {
+                alert('Error: Ya existe un cliente con este RUT en tu organización.');
+            } else {
+                alert('Error al guardar el cliente: ' + (error.message || 'Error desconocido'));
+            }
         }
     };
 
@@ -448,6 +472,25 @@ const Clients = () => {
                                     value={formData.internal_notes}
                                     onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
                                 ></textarea>
+                            </div>
+
+                            <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <Users className="text-orange-600" size={18} />
+                                    <div>
+                                        <p className="text-sm font-bold text-petrol-800 tracking-tight leading-none">Sincronización Automática</p>
+                                        <p className="text-xs text-stone-500 mt-1">Sincronizar cambios con Pipedrive</p>
+                                    </div>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="sr-only peer"
+                                        checked={syncToCRM}
+                                        onChange={(e) => setSyncToCRM(e.target.checked)}
+                                    />
+                                    <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                                </label>
                             </div>
 
                             <div className="pt-6 flex gap-3">

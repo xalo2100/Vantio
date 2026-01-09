@@ -111,6 +111,11 @@ export const pipedriveService = {
                     quoteId,
                     clientName: clientData.name,
                     clientEmail: clientData.email,
+                    companyName: clientData.company,
+                    clientPhone: clientData.phone,
+                    clientRut: clientData.rut,
+                    clientCity: clientData.city,
+                    clientAddress: clientData.address,
                     sellerEmail,
                     organizationId
                 }
